@@ -59,7 +59,7 @@ func (m *Manager) CreateNote(name, templateName string) (*storage.Note, error) {
 		return nil, fmt.Errorf("write note: %w", err)
 	}
 
-	hash := computeHash(content)
+	hash := ComputeHash(content)
 	note := &storage.Note{
 		ID:          generateID(),
 		Filename:    name,
@@ -99,7 +99,7 @@ func (m *Manager) OpenNote(name string) (*storage.Note, string, error) {
 				Filename:    name,
 				Title:       fm.Title,
 				Path:        name,
-				ContentHash: computeHash(content),
+				ContentHash: ComputeHash(content),
 				WordCount:   WordCount(content),
 				CreatedAt:   time.Now(),
 				ModifiedAt:  time.Now(),
@@ -153,7 +153,7 @@ func ParseFileFrontmatter(path string) (Frontmatter, string, error) {
 	return ParseFrontmatter(string(data))
 }
 
-func computeHash(content string) string {
+func ComputeHash(content string) string {
 	h := sha256.Sum256([]byte(content))
 	return fmt.Sprintf("%x", h)
 }
