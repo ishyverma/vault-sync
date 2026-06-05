@@ -141,6 +141,29 @@ func (m *Manager) SearchNotes(query string) ([]*storage.Note, error) {
 	return m.store.SearchNotes(query)
 }
 
+func (m *Manager) SyncFromDisk(noteID string) error {
+	note, err := m.store.GetNote(noteID)
+	if err != nil {
+		return fmt.Errorf("get note: %w", err)
+	}
+
+	notePath := filepath.Join(m.NotesDir(), note.Filename)
+	data, err := os.ReadFile(notePath)
+	if err != nil {
+		return fmt.Errorf("read note file: %w", err)
+	}
+
+	content := string(data)
+	fm, body, _ := ParseFrontmatter(content)
+
+	note.Title = fm.Title
+	note.Tags = fm.Tags
+	note.ContentHash = ComputeHash(content)
+	note.WordCount = WordCount(body)
+
+	return m.store.UpdateNote(note)
+}
+
 func (m *Manager) NotesDir() string {
 	return filepath.Join(m.vaultDir, "notes")
 }
