@@ -1,6 +1,7 @@
 package core
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -159,19 +160,7 @@ func computeHash(content string) string {
 
 func generateID() string {
 	b := make([]byte, 16)
-	urandom(b)
+	rand.Read(b)
 	return fmt.Sprintf("%x-%x-%x-%x-%x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
-func urandom(b []byte) {
-	f, err := os.Open("/dev/urandom")
-	if err != nil {
-		for i := range b {
-			b[i] = byte(time.Now().UnixNano() % 256)
-		}
-		return
-	}
-	defer f.Close()
-	f.Read(b)
 }

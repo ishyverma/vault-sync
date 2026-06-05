@@ -24,7 +24,7 @@ Examples:
 			return fmt.Errorf("open vault: %w", err)
 		}
 
-		note, notePath, err := mgr.OpenNote(name)
+		_, notePath, err := mgr.OpenNote(name)
 		if err != nil {
 			return fmt.Errorf("open note: %w", err)
 		}
@@ -37,7 +37,6 @@ Examples:
 		if err := openInEditor(fullPath); err != nil {
 			return fmt.Errorf("open editor: %w", err)
 		}
-		_ = note
 		return nil
 	},
 }

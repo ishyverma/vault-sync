@@ -8,6 +8,7 @@ PLAN.md
 /vaultsync
 /tmp/
 /dist/
+/build/
 /cover.out
 /coverage/
 .idea/
