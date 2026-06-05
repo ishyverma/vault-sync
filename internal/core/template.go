@@ -18,8 +18,8 @@ type TemplateEngine struct {
 func NewTemplateEngine() *TemplateEngine {
 	return &TemplateEngine{
 		templates: map[string]string{
-			"blank": BlankTemplate,
-			"daily": DailyTemplate,
+			"blank":   BlankTemplate,
+			"daily":   DailyTemplate,
 			"meeting": MeetingTemplate,
 			"project": ProjectTemplate,
 		},

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/ishyverma/vault-sync/internal/config"
+	"github.com/ishyverma/vault-sync/internal/core"
+	"github.com/ishyverma/vault-sync/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +21,7 @@ var initCmd = &cobra.Command{
   - Creates ~/.vault/notes/ for your markdown files
   - Creates ~/.config/vault/config.toml with defaults
   - Detects your preferred editor (nvim, vim, nano)
-  - Initializes the SQLite database
+  - Initializes the note index
 
 Run this once before using any other vault commands.`,
 	Args: cobra.NoArgs,
@@ -63,7 +65,6 @@ func runInit(cmd *cobra.Command) error {
 	notesDir := filepath.Join(vaultDir, "notes")
 	templatesDir := filepath.Join(vaultDir, "templates")
 	attachmentsDir := filepath.Join(vaultDir, "attachments")
-	dbPath := filepath.Join(vaultDir, "vault.db")
 
 	dirs := []string{
 		cfgDir,
@@ -89,16 +90,18 @@ func runInit(cmd *cobra.Command) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
+	store := storage.NewNoteStore(vaultDir)
+	store.Init()
+
 	fmt.Println("✓ VaultSync initialized")
 	fmt.Println()
 	fmt.Printf("  Vault path:   %s\n", notesDir)
 	fmt.Printf("  Config:       %s\n", cfgPath)
 	fmt.Printf("  Editor:       %s\n", editor)
-	fmt.Printf("  Database:     %s\n", dbPath)
 	fmt.Println()
 	fmt.Println("  Next steps:")
 	fmt.Println("    vault new my-first-note    Create a note")
-	fmt.Println("    vault                      Launch the TUI dashboard")
+	fmt.Println("    vault list                 List all notes")
 	fmt.Println()
 
 	notesSample := filepath.Join(notesDir, "welcome.md")
@@ -123,8 +126,8 @@ Open a note:
 Search your notes:
   vault search "keyword"
 
-Sync your vault:
-  vault sync
+List all notes:
+  vault list
 
 ## Tips
 
@@ -137,6 +140,17 @@ Sync your vault:
 	if err := os.WriteFile(notesSample, []byte(sampleContent), 0o644); err != nil {
 		return fmt.Errorf("create welcome note: %w", err)
 	}
+
+	fm, body, _ := core.ParseFrontmatter(sampleContent)
+	store.CreateNote(&storage.Note{
+		ID:        generateID(),
+		Filename:  "welcome.md",
+		Title:     fm.Title,
+		Path:      "welcome.md",
+		Tags:      fm.Tags,
+		WordCount: core.WordCount(body),
+	})
+
 	fmt.Printf("  ✓ Created %s/welcome.md\n", notesDir)
 
 	if err := writeDefaultTemplates(templatesDir); err != nil {

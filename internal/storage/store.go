@@ -1,6 +1,12 @@
 package storage
 
-import "time"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
 
 type Store interface {
 	Init() error
@@ -16,19 +22,71 @@ type Store interface {
 }
 
 type NoteStore struct {
-	vaultDir    string
-	notes       map[string]*Note
-	dirty       bool
+	mu        sync.RWMutex
+	vaultDir  string
+	notes     map[string]*Note
+	indexPath string
+}
+
+type indexFile struct {
+	Notes map[string]*Note `json:"notes"`
 }
 
 func NewNoteStore(vaultDir string) *NoteStore {
 	return &NoteStore{
-		vaultDir: vaultDir,
-		notes:    make(map[string]*Note),
+		vaultDir:  vaultDir,
+		notes:     make(map[string]*Note),
+		indexPath: filepath.Join(vaultDir, "vault.json"),
 	}
 }
 
+func (s *NoteStore) Init() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.MkdirAll(s.vaultDir, 0o755); err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(s.indexPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			s.notes = make(map[string]*Note)
+			return nil
+		}
+		return err
+	}
+
+	var idx indexFile
+	if err := json.Unmarshal(data, &idx); err != nil {
+		s.notes = make(map[string]*Note)
+		return nil
+	}
+
+	if idx.Notes == nil {
+		s.notes = make(map[string]*Note)
+	} else {
+		s.notes = idx.Notes
+	}
+	return nil
+}
+
+func (s *NoteStore) save() error {
+	idx := indexFile{Notes: s.notes}
+	data, err := json.MarshalIndent(idx, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.indexPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(s.indexPath, data, 0o644)
+}
+
 func (s *NoteStore) CreateNote(note *Note) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if _, exists := s.notes[note.ID]; exists {
 		return ErrNoteAlreadyExists
 	}
@@ -36,11 +94,13 @@ func (s *NoteStore) CreateNote(note *Note) error {
 	note.CreatedAt = now
 	note.ModifiedAt = now
 	s.notes[note.ID] = note
-	s.dirty = true
-	return nil
+	return s.save()
 }
 
 func (s *NoteStore) GetNote(id string) (*Note, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	note, exists := s.notes[id]
 	if !exists {
 		return nil, ErrNoteNotFound
@@ -49,6 +109,9 @@ func (s *NoteStore) GetNote(id string) (*Note, error) {
 }
 
 func (s *NoteStore) FindNoteByFilename(filename string) (*Note, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	for _, note := range s.notes {
 		if note.Filename == filename {
 			return note, nil
@@ -58,25 +121,32 @@ func (s *NoteStore) FindNoteByFilename(filename string) (*Note, error) {
 }
 
 func (s *NoteStore) UpdateNote(note *Note) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if _, exists := s.notes[note.ID]; !exists {
 		return ErrNoteNotFound
 	}
 	note.ModifiedAt = time.Now()
 	s.notes[note.ID] = note
-	s.dirty = true
-	return nil
+	return s.save()
 }
 
 func (s *NoteStore) DeleteNote(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if _, exists := s.notes[id]; !exists {
 		return ErrNoteNotFound
 	}
 	delete(s.notes, id)
-	s.dirty = true
-	return nil
+	return s.save()
 }
 
 func (s *NoteStore) ListNotes() ([]*Note, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	result := make([]*Note, 0, len(s.notes))
 	for _, note := range s.notes {
 		if !note.Archived {
@@ -87,6 +157,9 @@ func (s *NoteStore) ListNotes() ([]*Note, error) {
 }
 
 func (s *NoteStore) ListNotesByTag(tag string) ([]*Note, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	var result []*Note
 	for _, note := range s.notes {
 		if note.Archived {
@@ -106,6 +179,10 @@ func (s *NoteStore) SearchNotes(query string) ([]*Note, error) {
 	if query == "" {
 		return s.ListNotes()
 	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	queryLower := toLower(query)
 	var result []*Note
 	for _, note := range s.notes {
@@ -121,7 +198,9 @@ func (s *NoteStore) SearchNotes(query string) ([]*Note, error) {
 }
 
 func (s *NoteStore) Close() error {
-	return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.save()
 }
 
 func toLower(s string) string {
@@ -160,8 +239,4 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
-}
-
-func (s *NoteStore) Init() error {
-	return nil
 }
