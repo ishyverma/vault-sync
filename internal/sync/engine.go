@@ -85,9 +85,9 @@ func (e *Engine) PushNote(noteID string) error {
 			conflict, checkErr := e.detectConflict(conn, state)
 			if checkErr == nil && conflict {
 				e.store.UpsertSyncState(&storage.SyncState{
-					NoteID: noteID,
-					Backend: name,
-					Status: "conflict",
+					NoteID:   noteID,
+					Backend:  name,
+					Status:   "conflict",
 					ErrorMsg: "remote file modified externally",
 				})
 				continue

@@ -20,9 +20,9 @@ type mockConnector struct {
 	content  string
 }
 
-func (m *mockConnector) Name() string                                 { return m.name }
-func (m *mockConnector) Connect() error                               { return nil }
-func (m *mockConnector) Status() (bool, error)                        { return true, nil }
+func (m *mockConnector) Name() string          { return m.name }
+func (m *mockConnector) Connect() error        { return nil }
+func (m *mockConnector) Status() (bool, error) { return true, nil }
 func (m *mockConnector) Push(note *storage.Note, content string) (string, error) {
 	m.pushCall++
 	if m.pushErr != nil {

@@ -10,11 +10,11 @@ import (
 )
 
 type Connector struct {
-	vaultPath  string
-	subfolder  string
-	notesDir   string
-	wikilinks  bool
-	targetDir  string
+	vaultPath string
+	subfolder string
+	notesDir  string
+	wikilinks bool
+	targetDir string
 }
 
 func NewConnector(vaultPath, subfolder, notesDir string, wikilinks bool) *Connector {
