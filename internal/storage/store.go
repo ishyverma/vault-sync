@@ -20,6 +20,17 @@ type Store interface {
 	ListNotesByTag(tag string) ([]*Note, error)
 	SearchNotes(query string) ([]*Note, error)
 	Close() error
+
+	GetSyncState(noteID, backend string) (*SyncState, error)
+	UpsertSyncState(state *SyncState) error
+	DeleteSyncState(noteID, backend string) error
+	ListSyncStates() ([]*SyncState, error)
+	ListSyncStatesByStatus(status string) ([]*SyncState, error)
+	EnqueueSyncJob(noteID string, backends []string, direction string) error
+	DequeueSyncJob() (*SyncQueueItem, error)
+	QueueLength() (int, error)
+	AddSyncHistory(entry *SyncHistoryEntry) error
+	ListSyncHistory(noteID string) ([]*SyncHistoryEntry, error)
 }
 
 type NoteStore struct {
@@ -74,6 +85,37 @@ func (s *NoteStore) migrate() error {
 	CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts4(
 		title,
 		content
+	);
+
+	CREATE TABLE IF NOT EXISTS sync_state (
+		note_id      TEXT NOT NULL,
+		backend      TEXT NOT NULL,
+		remote_id    TEXT DEFAULT '',
+		last_sync_at DATETIME,
+		last_hash    TEXT DEFAULT '',
+		status       TEXT NOT NULL DEFAULT 'local_only',
+		error_msg    TEXT DEFAULT '',
+		PRIMARY KEY (note_id, backend)
+	);
+
+	CREATE TABLE IF NOT EXISTS sync_queue (
+		id        INTEGER PRIMARY KEY AUTOINCREMENT,
+		note_id   TEXT NOT NULL,
+		backends  TEXT NOT NULL,
+		direction TEXT NOT NULL DEFAULT 'push',
+		queued_at DATETIME,
+		attempts  INTEGER DEFAULT 0,
+		last_error TEXT DEFAULT ''
+	);
+
+	CREATE TABLE IF NOT EXISTS sync_history (
+		id        INTEGER PRIMARY KEY AUTOINCREMENT,
+		note_id   TEXT NOT NULL,
+		backend   TEXT NOT NULL,
+		direction TEXT NOT NULL,
+		status    TEXT NOT NULL,
+		synced_at DATETIME,
+		hash      TEXT DEFAULT ''
 	);
 	`
 
