@@ -215,6 +215,10 @@ func (e *Engine) recordFailure(noteID, backend string, err error) {
 	})
 }
 
+func (e *Engine) QueueLength() (int, error) {
+	return e.store.QueueLength()
+}
+
 func (e *Engine) readNoteFile(filename string) (string, error) {
 	path := filepath.Join(e.notesDir, filename)
 	data, err := os.ReadFile(path)
