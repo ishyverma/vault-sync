@@ -79,6 +79,10 @@ func (c *Connector) Delete(remoteID string) error {
 	return nil
 }
 
+func (c *Connector) TargetDir() string {
+	return c.targetDir
+}
+
 func (c *Connector) resolvePath(notePath string) string {
 	return filepath.Join(c.targetDir, notePath)
 }

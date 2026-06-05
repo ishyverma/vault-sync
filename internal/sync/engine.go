@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ishyverma/vault-sync/internal/connectors"
+	"github.com/ishyverma/vault-sync/internal/core"
 	"github.com/ishyverma/vault-sync/internal/storage"
 )
 
@@ -122,6 +123,100 @@ func (e *Engine) PushNote(noteID string) error {
 	return nil
 }
 
+func (e *Engine) PushAll() error {
+	notes, err := e.store.ListNotes()
+	if err != nil {
+		return fmt.Errorf("list notes: %w", err)
+	}
+	for _, note := range notes {
+		if err := e.PushNote(note.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) PullNote(noteID string) error {
+	note, err := e.store.GetNote(noteID)
+	if err != nil {
+		return fmt.Errorf("get note: %w", err)
+	}
+
+	for name, conn := range e.connectors {
+		state, err := e.store.GetSyncState(noteID, name)
+		if err != nil || state.RemoteID == "" {
+			continue
+		}
+
+		remoteContent, pullErr := conn.Pull(state.RemoteID)
+		if pullErr != nil {
+			if os.IsNotExist(pullErr) {
+				continue
+			}
+			e.recordPullFailure(noteID, name, pullErr)
+			continue
+		}
+
+		remoteHash := computeHash(remoteContent)
+		if remoteHash == state.LastHash {
+			continue
+		}
+
+		localPath := filepath.Join(e.notesDir, note.Filename)
+		if err := os.WriteFile(localPath, []byte(remoteContent), 0o644); err != nil {
+			e.recordPullFailure(noteID, name, fmt.Errorf("write local file: %w", err))
+			continue
+		}
+
+		fm, body, _ := core.ParseFrontmatter(remoteContent)
+		note.Title = fm.Title
+		note.Tags = fm.Tags
+		note.ContentHash = computeHash(remoteContent)
+		note.WordCount = core.WordCount(body)
+		note.ModifiedAt = time.Now().UTC()
+
+		if err := e.store.UpdateNote(note); err != nil {
+			e.recordPullFailure(noteID, name, fmt.Errorf("update store: %w", err))
+			continue
+		}
+
+		e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+			NoteID:    noteID,
+			Backend:   name,
+			Direction: "pull",
+			Status:    "success",
+			SyncedAt:  time.Now().UTC(),
+			Hash:      remoteHash,
+		})
+
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:     noteID,
+			Backend:    name,
+			RemoteID:   state.RemoteID,
+			LastSyncAt: time.Now().UTC(),
+			LastHash:   remoteHash,
+			Status:     "synced",
+		})
+	}
+
+	return nil
+}
+
+func (e *Engine) PullAll() error {
+	notes, err := e.store.ListNotes()
+	if err != nil {
+		return fmt.Errorf("list notes: %w", err)
+	}
+
+	for _, note := range notes {
+		if err := e.PullNote(note.ID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (e *Engine) SyncAll() error {
 	notes, err := e.store.ListNotes()
 	if err != nil {
@@ -207,6 +302,22 @@ func (e *Engine) recordFailure(noteID, backend string, err error) {
 		SyncedAt:  time.Now().UTC(),
 	})
 
+	e.store.UpsertSyncState(&storage.SyncState{
+		NoteID:   noteID,
+		Backend:  backend,
+		Status:   "failed",
+		ErrorMsg: err.Error(),
+	})
+}
+
+func (e *Engine) recordPullFailure(noteID, backend string, err error) {
+	e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+		NoteID:    noteID,
+		Backend:   backend,
+		Direction: "pull",
+		Status:    "failed",
+		SyncedAt:  time.Now().UTC(),
+	})
 	e.store.UpsertSyncState(&storage.SyncState{
 		NoteID:   noteID,
 		Backend:  backend,

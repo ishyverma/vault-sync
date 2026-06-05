@@ -83,6 +83,10 @@ Press Ctrl+C to stop.`,
 		}
 
 		daemon := sync.NewDaemon(engine, notesDir, pollInterval)
+		if cfg.Backends.Obsidian.Enabled {
+			obsidianDir := filepath.Join(cfg.Backends.Obsidian.VaultPath, cfg.Backends.Obsidian.Subfolder)
+			daemon.SetObsidianDir(obsidianDir)
+		}
 		return daemon.Start()
 	},
 }

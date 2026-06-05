@@ -14,16 +14,18 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/ishyverma/vault-sync/internal/core"
+	"github.com/ishyverma/vault-sync/internal/storage"
 )
 
 type Daemon struct {
-	engine   *Engine
-	notesDir string
-	pidPath  string
-	interval time.Duration
-	watcher  *fsnotify.Watcher
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	engine      *Engine
+	notesDir    string
+	obsidianDir string
+	pidPath     string
+	interval    time.Duration
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
 func NewDaemon(engine *Engine, notesDir string, interval time.Duration) *Daemon {
@@ -35,6 +37,10 @@ func NewDaemon(engine *Engine, notesDir string, interval time.Duration) *Daemon 
 	}
 }
 
+func (d *Daemon) SetObsidianDir(dir string) {
+	d.obsidianDir = dir
+}
+
 func (d *Daemon) Start() error {
 	if err := d.writePID(); err != nil {
 		return fmt.Errorf("write PID: %w", err)
@@ -44,11 +50,20 @@ func (d *Daemon) Start() error {
 	if err != nil {
 		return fmt.Errorf("create watcher: %w", err)
 	}
-	d.watcher = watcher
 	defer watcher.Close()
 
 	if err := watcher.Add(d.notesDir); err != nil {
 		return fmt.Errorf("watch notes dir: %w", err)
+	}
+
+	hasObsidian := false
+	if d.obsidianDir != "" {
+		if info, err := os.Stat(d.obsidianDir); err == nil && info.IsDir() {
+			if err := watcher.Add(d.obsidianDir); err != nil {
+				return fmt.Errorf("watch obsidian dir: %w", err)
+			}
+			hasObsidian = true
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -57,7 +72,7 @@ func (d *Daemon) Start() error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Printf("vaultd started — watching %s (poll interval: %v)", d.notesDir, d.interval)
+	log.Printf("vaultd started — watching %s (poll: %v, obsidian: %v)", d.notesDir, d.interval, hasObsidian)
 
 	d.wg.Add(2)
 	go d.watchLoop(ctx, watcher)
@@ -119,8 +134,11 @@ func (d *Daemon) Status() (bool, int, error) {
 func (d *Daemon) watchLoop(ctx context.Context, watcher *fsnotify.Watcher) {
 	defer d.wg.Done()
 
-	var debounceTimer *time.Timer
-	var debounceCh <-chan time.Time
+	var debouncePush *time.Timer
+	var debouncePushCh <-chan time.Time
+	var pendingEvents []fsnotify.Event
+
+	const debounce = 500 * time.Millisecond
 
 	for {
 		select {
@@ -132,16 +150,18 @@ func (d *Daemon) watchLoop(ctx context.Context, watcher *fsnotify.Watcher) {
 				continue
 			}
 
-			if debounceTimer != nil {
-				debounceTimer.Stop()
+			pendingEvents = append(pendingEvents, event)
+			if debouncePush != nil {
+				debouncePush.Stop()
 			}
-			debounceTimer = time.NewTimer(500 * time.Millisecond)
-			debounceCh = debounceTimer.C
+			debouncePush = time.NewTimer(debounce)
+			debouncePushCh = debouncePush.C
 
-		case <-debounceCh:
-			d.syncAllNotes()
-			debounceTimer = nil
-			debounceCh = nil
+		case <-debouncePushCh:
+			d.processEvents(pendingEvents)
+			pendingEvents = nil
+			debouncePush = nil
+			debouncePushCh = nil
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -155,6 +175,88 @@ func (d *Daemon) watchLoop(ctx context.Context, watcher *fsnotify.Watcher) {
 	}
 }
 
+func (d *Daemon) processEvents(events []fsnotify.Event) {
+	var pushNotes, pullNotes []string
+
+	for _, ev := range events {
+		filename := filepath.Base(ev.Name)
+		dir := filepath.Dir(ev.Name)
+
+		if dir == d.notesDir {
+			pushNotes = append(pushNotes, filename)
+		} else if d.obsidianDir != "" && strings.HasPrefix(dir, d.obsidianDir) {
+			pullNotes = append(pullNotes, filename)
+		}
+	}
+
+	pushNotes = unique(pushNotes)
+	pullNotes = unique(pullNotes)
+
+	for _, fn := range pushNotes {
+		note, err := d.engine.store.FindNoteByFilename(fn)
+		if err != nil {
+			continue
+		}
+		if err := d.engine.PushNote(note.ID); err != nil {
+			log.Printf("push %s: %v", fn, err)
+		}
+	}
+
+	for _, fn := range pullNotes {
+		note, err := d.engine.store.FindNoteByFilename(fn)
+		if err != nil {
+			log.Printf("new obsidian file %s — importing", fn)
+			d.importFromObsidian(fn)
+			continue
+		}
+		if err := d.engine.PullNote(note.ID); err != nil {
+			log.Printf("pull %s: %v", fn, err)
+		}
+	}
+}
+
+func (d *Daemon) importFromObsidian(filename string) {
+	remotePath := filepath.Join(d.obsidianDir, filename)
+	data, err := os.ReadFile(remotePath)
+	if err != nil {
+		return
+	}
+
+	content := string(data)
+	localPath := filepath.Join(d.notesDir, filename)
+	if err := os.WriteFile(localPath, data, 0o644); err != nil {
+		return
+	}
+
+	fm, body, _ := core.ParseFrontmatter(content)
+	noteID := fmt.Sprintf("%x", computeHash(content))[:16]
+
+	note := &storage.Note{
+		ID:          noteID,
+		Filename:    filename,
+		Title:       fm.Title,
+		Path:        filename,
+		ContentHash: computeHash(content),
+		WordCount:   core.WordCount(body),
+		CreatedAt:   time.Now().UTC(),
+		ModifiedAt:  time.Now().UTC(),
+		Tags:        fm.Tags,
+	}
+
+	if err := d.engine.store.CreateNote(note); err != nil {
+		return
+	}
+
+	d.engine.store.UpsertSyncState(&storage.SyncState{
+		NoteID:     noteID,
+		Backend:    "obsidian",
+		RemoteID:   remotePath,
+		LastSyncAt: time.Now().UTC(),
+		LastHash:   note.ContentHash,
+		Status:     "synced",
+	})
+}
+
 func (d *Daemon) pollLoop(ctx context.Context) {
 	defer d.wg.Done()
 
@@ -164,16 +266,17 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			d.syncAllNotes()
+			if err := d.engine.PushAll(); err != nil {
+				log.Printf("push error: %v", err)
+			}
+			if d.obsidianDir != "" {
+				if err := d.engine.PullAll(); err != nil {
+					log.Printf("pull error: %v", err)
+				}
+			}
 		case <-ctx.Done():
 			return
 		}
-	}
-}
-
-func (d *Daemon) syncAllNotes() {
-	if err := d.engine.SyncAll(); err != nil {
-		log.Printf("sync error: %v", err)
 	}
 }
 
@@ -198,4 +301,16 @@ func isNoteEvent(event fsnotify.Event) bool {
 		return false
 	}
 	return event.Op&(fsnotify.Create|fsnotify.Write) != 0
+}
+
+func unique(strs []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, s := range strs {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
 }
