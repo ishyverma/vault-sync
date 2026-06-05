@@ -24,7 +24,7 @@ Examples:
 			return fmt.Errorf("open vault: %w", err)
 		}
 
-		_, notePath, err := mgr.OpenNote(name)
+		note, notePath, err := mgr.OpenNote(name)
 		if err != nil {
 			return fmt.Errorf("open note: %w", err)
 		}
@@ -36,6 +36,10 @@ Examples:
 
 		if err := openInEditor(fullPath); err != nil {
 			return fmt.Errorf("open editor: %w", err)
+		}
+
+		if err := mgr.SyncFromDisk(note.ID); err != nil {
+			return fmt.Errorf("sync after edit: %w", err)
 		}
 		return nil
 	},
