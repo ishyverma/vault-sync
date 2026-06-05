@@ -19,20 +19,20 @@ type Config struct {
 }
 
 type VaultConfig struct {
-	Path                  string `mapstructure:"path"`
-	Editor                string `mapstructure:"editor"`
-	AutoDaily             bool   `mapstructure:"auto_daily"`
-	TemplateDir           string `mapstructure:"template_dir"`
-	DefaultTemplate       string `mapstructure:"default_template"`
-	WordCountInStatusbar  bool   `mapstructure:"word_count_in_statusbar"`
+	Path                 string `mapstructure:"path"`
+	Editor               string `mapstructure:"editor"`
+	AutoDaily            bool   `mapstructure:"auto_daily"`
+	TemplateDir          string `mapstructure:"template_dir"`
+	DefaultTemplate      string `mapstructure:"default_template"`
+	WordCountInStatusbar bool   `mapstructure:"word_count_in_statusbar"`
 }
 
 type SyncConfig struct {
-	AutoSync           bool   `mapstructure:"auto_sync"`
-	SyncInterval       int    `mapstructure:"sync_interval"`
-	ConflictStrategy   string `mapstructure:"conflict_strategy"`
-	QueueRetryLimit    int    `mapstructure:"queue_retry_limit"`
-	QueueRetryBackoff  string `mapstructure:"queue_retry_backoff"`
+	AutoSync          bool   `mapstructure:"auto_sync"`
+	SyncInterval      int    `mapstructure:"sync_interval"`
+	ConflictStrategy  string `mapstructure:"conflict_strategy"`
+	QueueRetryLimit   int    `mapstructure:"queue_retry_limit"`
+	QueueRetryBackoff string `mapstructure:"queue_retry_backoff"`
 }
 
 type BackendsConfig struct {
@@ -42,12 +42,12 @@ type BackendsConfig struct {
 }
 
 type NotionConfig struct {
-	Enabled        bool   `mapstructure:"enabled"`
-	Token          string `mapstructure:"token"`
-	WorkspaceID    string `mapstructure:"workspace_id"`
-	TargetPageID   string `mapstructure:"target_page_id"`
-	DatabaseID     string `mapstructure:"database_id"`
-	SyncDirection  string `mapstructure:"sync_direction"`
+	Enabled       bool   `mapstructure:"enabled"`
+	Token         string `mapstructure:"token"`
+	WorkspaceID   string `mapstructure:"workspace_id"`
+	TargetPageID  string `mapstructure:"target_page_id"`
+	DatabaseID    string `mapstructure:"database_id"`
+	SyncDirection string `mapstructure:"sync_direction"`
 }
 
 type ObsidianConfig struct {
@@ -80,9 +80,9 @@ type SearchConfig struct {
 }
 
 type NotificationsConfig struct {
-	SyncSuccess       bool `mapstructure:"sync_success"`
-	SyncFailure       bool `mapstructure:"sync_failure"`
-	ConflictDetected  bool `mapstructure:"conflict_detected"`
+	SyncSuccess      bool `mapstructure:"sync_success"`
+	SyncFailure      bool `mapstructure:"sync_failure"`
+	ConflictDetected bool `mapstructure:"conflict_detected"`
 }
 
 type HooksConfig struct {
@@ -110,8 +110,8 @@ func DefaultConfig() Config {
 		},
 		Backends: BackendsConfig{
 			Notion: NotionConfig{
-				Enabled:        true,
-				SyncDirection:  "both",
+				Enabled:       true,
+				SyncDirection: "both",
 			},
 			Obsidian: ObsidianConfig{
 				Enabled:       true,
@@ -234,28 +234,28 @@ func Save(cfg *Config) error {
 func structToMap(cfg *Config) map[string]interface{} {
 	return map[string]interface{}{
 		"vault": map[string]interface{}{
-			"path":                     cfg.Vault.Path,
-			"editor":                   cfg.Vault.Editor,
-			"auto_daily":               cfg.Vault.AutoDaily,
-			"template_dir":             cfg.Vault.TemplateDir,
-			"default_template":         cfg.Vault.DefaultTemplate,
-			"word_count_in_statusbar":  cfg.Vault.WordCountInStatusbar,
+			"path":                    cfg.Vault.Path,
+			"editor":                  cfg.Vault.Editor,
+			"auto_daily":              cfg.Vault.AutoDaily,
+			"template_dir":            cfg.Vault.TemplateDir,
+			"default_template":        cfg.Vault.DefaultTemplate,
+			"word_count_in_statusbar": cfg.Vault.WordCountInStatusbar,
 		},
 		"sync": map[string]interface{}{
-			"auto_sync":            cfg.Sync.AutoSync,
-			"sync_interval":        cfg.Sync.SyncInterval,
-			"conflict_strategy":    cfg.Sync.ConflictStrategy,
-			"queue_retry_limit":    cfg.Sync.QueueRetryLimit,
-			"queue_retry_backoff":  cfg.Sync.QueueRetryBackoff,
+			"auto_sync":           cfg.Sync.AutoSync,
+			"sync_interval":       cfg.Sync.SyncInterval,
+			"conflict_strategy":   cfg.Sync.ConflictStrategy,
+			"queue_retry_limit":   cfg.Sync.QueueRetryLimit,
+			"queue_retry_backoff": cfg.Sync.QueueRetryBackoff,
 		},
 		"backends": map[string]interface{}{
 			"notion": map[string]interface{}{
-				"enabled":         cfg.Backends.Notion.Enabled,
-				"token":           cfg.Backends.Notion.Token,
-				"workspace_id":    cfg.Backends.Notion.WorkspaceID,
-				"target_page_id":  cfg.Backends.Notion.TargetPageID,
-				"database_id":     cfg.Backends.Notion.DatabaseID,
-				"sync_direction":  cfg.Backends.Notion.SyncDirection,
+				"enabled":        cfg.Backends.Notion.Enabled,
+				"token":          cfg.Backends.Notion.Token,
+				"workspace_id":   cfg.Backends.Notion.WorkspaceID,
+				"target_page_id": cfg.Backends.Notion.TargetPageID,
+				"database_id":    cfg.Backends.Notion.DatabaseID,
+				"sync_direction": cfg.Backends.Notion.SyncDirection,
 			},
 			"obsidian": map[string]interface{}{
 				"enabled":        cfg.Backends.Obsidian.Enabled,
