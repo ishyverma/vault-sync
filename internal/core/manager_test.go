@@ -14,6 +14,9 @@ func newTestManager(t *testing.T) (*Manager, string) {
 	t.Helper()
 	vaultDir := t.TempDir()
 	store := storage.NewNoteStore(vaultDir)
+	if err := store.Init(); err != nil {
+		t.Fatal(err)
+	}
 	tmpl := NewTemplateEngine()
 	m := NewManager(vaultDir, store, tmpl)
 	return m, vaultDir

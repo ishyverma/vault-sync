@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -8,8 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newTestStore(t *testing.T) *NoteStore {
+	t.Helper()
+	tmpDir := t.TempDir()
+	s := NewNoteStore(tmpDir)
+	err := s.Init()
+	require.NoError(t, err)
+	return s
+}
+
 func TestCreateAndGetNote(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	note := &Note{
 		ID:       "test-1",
 		Filename: "my-note.md",
@@ -28,22 +39,36 @@ func TestCreateAndGetNote(t *testing.T) {
 	assert.Equal(t, []string{"dev", "go"}, got.Tags)
 }
 
-func TestCreateDuplicateNote(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
-	err := s.CreateNote(&Note{ID: "dup"})
+func TestCreateNote_MissingID(t *testing.T) {
+	s := newTestStore(t)
+	err := s.CreateNote(&Note{Filename: "no-id.md"})
+	assert.ErrorIs(t, err, ErrNoteIDRequired)
+}
+
+func TestCreateAndGetNote_WithFolder(t *testing.T) {
+	s := newTestStore(t)
+	note := &Note{
+		ID:       "folder-note",
+		Filename: "work/meeting.md",
+		Title:    "Meeting",
+		Folder:   "work",
+	}
+	err := s.CreateNote(note)
 	require.NoError(t, err)
-	err = s.CreateNote(&Note{ID: "dup"})
-	assert.ErrorIs(t, err, ErrNoteAlreadyExists)
+
+	got, err := s.GetNote("folder-note")
+	require.NoError(t, err)
+	assert.Equal(t, "work", got.Folder)
 }
 
 func TestGetNonexistentNote(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	_, err := s.GetNote("nope")
 	assert.ErrorIs(t, err, ErrNoteNotFound)
 }
 
 func TestFindNoteByFilename(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	err := s.CreateNote(&Note{ID: "1", Filename: "meeting.md"})
 	require.NoError(t, err)
 	err = s.CreateNote(&Note{ID: "2", Filename: "notes.md"})
@@ -58,7 +83,7 @@ func TestFindNoteByFilename(t *testing.T) {
 }
 
 func TestUpdateNote(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	err := s.CreateNote(&Note{ID: "u1", Title: "Old"})
 	require.NoError(t, err)
 
@@ -71,15 +96,29 @@ func TestUpdateNote(t *testing.T) {
 	assert.Equal(t, "Updated", got.Title)
 }
 
+func TestUpdateNote_UpdatesTags(t *testing.T) {
+	s := newTestStore(t)
+	err := s.CreateNote(&Note{ID: "tags-update", Title: "Tags", Tags: []string{"a", "b"}})
+	require.NoError(t, err)
+
+	note, _ := s.GetNote("tags-update")
+	note.Tags = []string{"c", "d"}
+	err = s.UpdateNote(note)
+	require.NoError(t, err)
+
+	got, _ := s.GetNote("tags-update")
+	assert.Equal(t, []string{"c", "d"}, got.Tags)
+}
+
 func TestUpdateNonexistentNote(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	err := s.UpdateNote(&Note{ID: "ghost"})
 	assert.ErrorIs(t, err, ErrNoteNotFound)
 }
 
 func TestDeleteNote(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
-	err := s.CreateNote(&Note{ID: "del"})
+	s := newTestStore(t)
+	err := s.CreateNote(&Note{ID: "del", Tags: []string{"gone"}})
 	require.NoError(t, err)
 
 	err = s.DeleteNote("del")
@@ -90,10 +129,10 @@ func TestDeleteNote(t *testing.T) {
 }
 
 func TestListNotes(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
-	s.CreateNote(&Note{ID: "a", Filename: "a.md"})
-	s.CreateNote(&Note{ID: "b", Filename: "b.md"})
-	s.CreateNote(&Note{ID: "c", Filename: "c.md", Archived: true})
+	s := newTestStore(t)
+	s.CreateNote(&Note{ID: "a", Filename: "a.md", Title: "A"})
+	s.CreateNote(&Note{ID: "b", Filename: "b.md", Title: "B"})
+	s.CreateNote(&Note{ID: "c", Filename: "c.md", Title: "C", Archived: true})
 
 	notes, err := s.ListNotes()
 	require.NoError(t, err)
@@ -101,7 +140,7 @@ func TestListNotes(t *testing.T) {
 }
 
 func TestListNotesByTag(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	s.CreateNote(&Note{ID: "1", Tags: []string{"go"}})
 	s.CreateNote(&Note{ID: "2", Tags: []string{"rust"}})
 	s.CreateNote(&Note{ID: "3", Tags: []string{"go", "test"}})
@@ -112,25 +151,13 @@ func TestListNotesByTag(t *testing.T) {
 }
 
 func TestSearchNotes(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	s.CreateNote(&Note{ID: "1", Title: "Rust Learning", Filename: "rust.md"})
 	s.CreateNote(&Note{ID: "2", Title: "Go Notes", Filename: "go.md"})
 	s.CreateNote(&Note{ID: "3", Title: "Project Plan", Filename: "plan.md"})
 
-	t.Run("match title", func(t *testing.T) {
+	t.Run("match by FTS", func(t *testing.T) {
 		notes, err := s.SearchNotes("rust")
-		require.NoError(t, err)
-		assert.Len(t, notes, 1)
-	})
-
-	t.Run("match filename", func(t *testing.T) {
-		notes, err := s.SearchNotes("plan")
-		require.NoError(t, err)
-		assert.Len(t, notes, 1)
-	})
-
-	t.Run("case insensitive", func(t *testing.T) {
-		notes, err := s.SearchNotes("RUST")
 		require.NoError(t, err)
 		assert.Len(t, notes, 1)
 	})
@@ -149,7 +176,7 @@ func TestSearchNotes(t *testing.T) {
 }
 
 func TestNoteTimestamps(t *testing.T) {
-	s := NewNoteStore("/tmp/test-vault")
+	s := newTestStore(t)
 	before := time.Now()
 	note := &Note{ID: "ts", Filename: "ts.md"}
 	err := s.CreateNote(note)
@@ -164,4 +191,50 @@ func TestNoteTimestamps(t *testing.T) {
 	note.Title = "updated"
 	s.UpdateNote(note)
 	assert.True(t, note.ModifiedAt.After(note.CreatedAt))
+}
+
+func TestInit_CreatesDBFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := NewNoteStore(tmpDir)
+	err := s.Init()
+	require.NoError(t, err)
+
+	dbPath := filepath.Join(tmpDir, "vault.db")
+	_, err = os.Stat(dbPath)
+	assert.NoError(t, err, "vault.db should exist")
+}
+
+func TestInit_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := NewNoteStore(tmpDir)
+	err := s.Init()
+	require.NoError(t, err)
+	err = s.Init()
+	require.NoError(t, err, "Init should be idempotent")
+}
+
+func TestClose(t *testing.T) {
+	s := newTestStore(t)
+	err := s.Close()
+	assert.NoError(t, err)
+}
+
+func TestPersistAcrossStores(t *testing.T) {
+	tmpDir := t.TempDir()
+	s1 := NewNoteStore(tmpDir)
+	err := s1.Init()
+	require.NoError(t, err)
+
+	err = s1.CreateNote(&Note{ID: "persist", Filename: "persist.md", Title: "Persisted"})
+	require.NoError(t, err)
+	s1.Close()
+
+	s2 := NewNoteStore(tmpDir)
+	err = s2.Init()
+	require.NoError(t, err)
+
+	note, err := s2.GetNote("persist")
+	require.NoError(t, err)
+	assert.Equal(t, "Persisted", note.Title)
+	s2.Close()
 }

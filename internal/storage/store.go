@@ -1,11 +1,12 @@
 package storage
 
 import (
-	"encoding/json"
+	"database/sql"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type Store interface {
@@ -22,157 +23,248 @@ type Store interface {
 }
 
 type NoteStore struct {
-	mu        sync.RWMutex
-	vaultDir  string
-	notes     map[string]*Note
-	indexPath string
-}
-
-type indexFile struct {
-	Notes map[string]*Note `json:"notes"`
+	db       *sql.DB
+	dbPath   string
+	vaultDir string
 }
 
 func NewNoteStore(vaultDir string) *NoteStore {
 	return &NoteStore{
-		vaultDir:  vaultDir,
-		notes:     make(map[string]*Note),
-		indexPath: filepath.Join(vaultDir, "vault.json"),
+		vaultDir: vaultDir,
+		dbPath:   filepath.Join(vaultDir, "vault.db"),
 	}
 }
 
 func (s *NoteStore) Init() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := os.MkdirAll(s.vaultDir, 0o755); err != nil {
 		return err
 	}
 
-	data, err := os.ReadFile(s.indexPath)
+	db, err := sql.Open("sqlite3", s.dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
-		if os.IsNotExist(err) {
-			s.notes = make(map[string]*Note)
-			return nil
-		}
 		return err
 	}
+	s.db = db
 
-	var idx indexFile
-	if err := json.Unmarshal(data, &idx); err != nil {
-		s.notes = make(map[string]*Note)
-		return nil
-	}
-
-	if idx.Notes == nil {
-		s.notes = make(map[string]*Note)
-	} else {
-		s.notes = idx.Notes
-	}
-	return nil
+	return s.migrate()
 }
 
-func (s *NoteStore) save() error {
-	idx := indexFile{Notes: s.notes}
-	data, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.indexPath), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(s.indexPath, data, 0o644)
+func (s *NoteStore) migrate() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS notes (
+		id            TEXT PRIMARY KEY,
+		filename      TEXT NOT NULL,
+		title         TEXT,
+		path          TEXT NOT NULL,
+		folder        TEXT DEFAULT '',
+		content_hash  TEXT NOT NULL DEFAULT '',
+		word_count    INTEGER DEFAULT 0,
+		created_at    DATETIME,
+		modified_at   DATETIME,
+		archived      INTEGER DEFAULT 0,
+		pinned        INTEGER DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS tags (
+		note_id  TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+		tag      TEXT NOT NULL,
+		PRIMARY KEY (note_id, tag)
+	);
+
+	CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts4(
+		title,
+		content
+	);
+	`
+
+	_, err := s.db.Exec(schema)
+	return err
 }
 
 func (s *NoteStore) CreateNote(note *Note) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, exists := s.notes[note.ID]; exists {
-		return ErrNoteAlreadyExists
+	if note.ID == "" {
+		return ErrNoteIDRequired
 	}
-	now := time.Now()
+
+	now := time.Now().UTC()
 	note.CreatedAt = now
 	note.ModifiedAt = now
-	s.notes[note.ID] = note
-	return s.save()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+		INSERT INTO notes (id, filename, title, path, folder, content_hash, word_count, created_at, modified_at, archived, pinned)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		note.ID, note.Filename, note.Title, note.Path, note.Folder, note.ContentHash, note.WordCount,
+		note.CreatedAt.Format(time.RFC3339), note.ModifiedAt.Format(time.RFC3339), boolToInt(note.Archived), boolToInt(note.Pinned))
+	if err != nil {
+		return err
+	}
+
+	if err := s.insertNoteFTS(tx, note); err != nil {
+		return err
+	}
+
+	for _, tag := range note.Tags {
+		_, err = tx.Exec(`INSERT OR IGNORE INTO tags (note_id, tag) VALUES (?, ?)`, note.ID, tag)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *NoteStore) GetNote(id string) (*Note, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	row := s.db.QueryRow(`
+		SELECT id, filename, COALESCE(title,''), path, COALESCE(folder,''), COALESCE(content_hash,''),
+		       COALESCE(word_count,0), COALESCE(created_at,''), COALESCE(modified_at,''), COALESCE(archived,0), COALESCE(pinned,0)
+		FROM notes WHERE id = ?`, id)
 
-	note, exists := s.notes[id]
-	if !exists {
+	n := &Note{}
+	var createdStr, modifiedStr string
+	var archivedInt, pinnedInt int
+	err := row.Scan(&n.ID, &n.Filename, &n.Title, &n.Path, &n.Folder, &n.ContentHash,
+		&n.WordCount, &createdStr, &modifiedStr, &archivedInt, &pinnedInt)
+	if err == sql.ErrNoRows {
 		return nil, ErrNoteNotFound
 	}
-	return note, nil
+	if err != nil {
+		return nil, err
+	}
+
+	n.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+	n.ModifiedAt, _ = time.Parse(time.RFC3339, modifiedStr)
+	n.Archived = intToBool(archivedInt)
+	n.Pinned = intToBool(pinnedInt)
+
+	tags, err := s.getTags(n.ID)
+	if err != nil {
+		return nil, err
+	}
+	n.Tags = tags
+
+	return n, nil
 }
 
 func (s *NoteStore) FindNoteByFilename(filename string) (*Note, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	row := s.db.QueryRow(`
+		SELECT id FROM notes WHERE filename = ? LIMIT 1`, filename)
 
-	for _, note := range s.notes {
-		if note.Filename == filename {
-			return note, nil
-		}
+	var id string
+	err := row.Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil, ErrNoteNotFound
 	}
-	return nil, ErrNoteNotFound
+	if err != nil {
+		return nil, err
+	}
+
+	return s.GetNote(id)
 }
 
 func (s *NoteStore) UpdateNote(note *Note) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	note.ModifiedAt = time.Now().UTC()
 
-	if _, exists := s.notes[note.ID]; !exists {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`
+		UPDATE notes SET filename=?, title=?, path=?, folder=?, content_hash=?, word_count=?,
+		                  modified_at=?, archived=?, pinned=?
+		WHERE id=?`,
+		note.Filename, note.Title, note.Path, note.Folder, note.ContentHash, note.WordCount,
+		note.ModifiedAt.Format(time.RFC3339), boolToInt(note.Archived), boolToInt(note.Pinned), note.ID)
+	if err != nil {
+		return err
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
 		return ErrNoteNotFound
 	}
-	note.ModifiedAt = time.Now()
-	s.notes[note.ID] = note
-	return s.save()
+
+	if err := s.deleteNoteFTS(tx, note.ID); err != nil {
+		return err
+	}
+	if err := s.insertNoteFTS(tx, note); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`DELETE FROM tags WHERE note_id = ?`, note.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, tag := range note.Tags {
+		_, err = tx.Exec(`INSERT OR IGNORE INTO tags (note_id, tag) VALUES (?, ?)`, note.ID, tag)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *NoteStore) DeleteNote(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, exists := s.notes[id]; !exists {
-		return ErrNoteNotFound
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
 	}
-	delete(s.notes, id)
-	return s.save()
+	defer tx.Rollback()
+
+	if err := s.deleteNoteFTS(tx, id); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`DELETE FROM notes WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`DELETE FROM tags WHERE note_id = ?`, id)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *NoteStore) ListNotes() ([]*Note, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	result := make([]*Note, 0, len(s.notes))
-	for _, note := range s.notes {
-		if !note.Archived {
-			result = append(result, note)
-		}
+	rows, err := s.db.Query(`
+		SELECT id, filename, COALESCE(title,''), path, COALESCE(folder,''), COALESCE(content_hash,''),
+		       COALESCE(word_count,0), created_at, modified_at, COALESCE(archived,0), COALESCE(pinned,0)
+		FROM notes WHERE archived = 0
+		ORDER BY modified_at DESC`)
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	defer rows.Close()
+
+	return s.scanNotes(rows)
 }
 
 func (s *NoteStore) ListNotesByTag(tag string) ([]*Note, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var result []*Note
-	for _, note := range s.notes {
-		if note.Archived {
-			continue
-		}
-		for _, t := range note.Tags {
-			if t == tag {
-				result = append(result, note)
-				break
-			}
-		}
+	rows, err := s.db.Query(`
+		SELECT n.id, n.filename, COALESCE(n.title,''), n.path, COALESCE(n.folder,''), COALESCE(n.content_hash,''),
+		       COALESCE(n.word_count,0), n.created_at, n.modified_at, COALESCE(n.archived,0), COALESCE(n.pinned,0)
+		FROM notes n
+		INNER JOIN tags t ON t.note_id = n.id
+		WHERE n.archived = 0 AND t.tag = ?
+		ORDER BY n.modified_at DESC`, tag)
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	defer rows.Close()
+
+	return s.scanNotes(rows)
 }
 
 func (s *NoteStore) SearchNotes(query string) ([]*Note, error) {
@@ -180,63 +272,114 @@ func (s *NoteStore) SearchNotes(query string) ([]*Note, error) {
 		return s.ListNotes()
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	queryLower := toLower(query)
-	var result []*Note
-	for _, note := range s.notes {
-		if note.Archived {
-			continue
-		}
-		if containsLower(note.Title, queryLower) ||
-			containsLower(note.Filename, queryLower) {
-			result = append(result, note)
+	rows, err := s.db.Query(`
+		SELECT n.id, n.filename, COALESCE(n.title,''), n.path, COALESCE(n.folder,''), COALESCE(n.content_hash,''),
+		       COALESCE(n.word_count,0), n.created_at, n.modified_at, COALESCE(n.archived,0), COALESCE(n.pinned,0)
+		FROM notes_fts f
+		INNER JOIN notes n ON n.rowid = f.docid
+		WHERE notes_fts MATCH ? AND n.archived = 0
+		ORDER BY n.modified_at DESC
+		LIMIT 50`, query)
+	if err != nil {
+		rows.Close()
+		rows, err = s.db.Query(`
+			SELECT id, filename, COALESCE(title,''), path, COALESCE(folder,''), COALESCE(content_hash,''),
+			       COALESCE(word_count,0), created_at, modified_at, COALESCE(archived,0), COALESCE(pinned,0)
+			FROM notes
+			WHERE archived = 0 AND (title LIKE '%' || ? || '%' OR filename LIKE '%' || ? || '%')
+			ORDER BY modified_at DESC
+			LIMIT 50`, query, query)
+		if err != nil {
+			return nil, err
 		}
 	}
-	return result, nil
+	defer rows.Close()
+
+	return s.scanNotes(rows)
 }
 
 func (s *NoteStore) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.save()
-}
-
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 32
-		}
-		b[i] = c
+	if s.db != nil {
+		return s.db.Close()
 	}
-	return string(b)
+	return nil
 }
 
-func containsLower(s, substr string) bool {
-	sLower := toLower(s)
-	return len(sLower) >= len(substr) && contains(sLower, substr)
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	limit := len(s) - len(substr)
-	for i := 0; i <= limit; i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
+func (s *NoteStore) getTags(noteID string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT tag FROM tags WHERE note_id = ? ORDER BY tag`, noteID)
+	if err != nil {
+		return nil, err
 	}
-	return false
+	defer rows.Close()
+
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+	return tags, nil
+}
+
+func (s *NoteStore) scanNotes(rows *sql.Rows) ([]*Note, error) {
+	var notes []*Note
+	for rows.Next() {
+		n := &Note{}
+		var createdStr, modifiedStr string
+		var archivedInt, pinnedInt int
+		err := rows.Scan(&n.ID, &n.Filename, &n.Title, &n.Path, &n.Folder, &n.ContentHash,
+			&n.WordCount, &createdStr, &modifiedStr, &archivedInt, &pinnedInt)
+		if err != nil {
+			return nil, err
+		}
+		n.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+		n.ModifiedAt, _ = time.Parse(time.RFC3339, modifiedStr)
+		n.Archived = intToBool(archivedInt)
+		n.Pinned = intToBool(pinnedInt)
+
+		tags, err := s.getTags(n.ID)
+		if err != nil {
+			return nil, err
+		}
+		n.Tags = tags
+		notes = append(notes, n)
+	}
+	return notes, rows.Err()
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func intToBool(i int) bool {
+	return i != 0
+}
+
+func (s *NoteStore) insertNoteFTS(tx *sql.Tx, note *Note) error {
+	var rowid int64
+	err := tx.QueryRow(`SELECT rowid FROM notes WHERE id = ?`, note.ID).Scan(&rowid)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT INTO notes_fts(docid, title, content) VALUES (?, ?, ?)`,
+		rowid, note.Title, note.Title)
+	return err
+}
+
+func (s *NoteStore) deleteNoteFTS(tx *sql.Tx, id string) error {
+	var rowid int64
+	err := tx.QueryRow(`SELECT rowid FROM notes WHERE id = ?`, id).Scan(&rowid)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`DELETE FROM notes_fts WHERE docid = ?`, rowid)
+	return err
 }
