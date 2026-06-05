@@ -61,10 +61,11 @@ func (m *Manager) CreateNote(name, templateName string) (*storage.Note, error) {
 
 	hash := ComputeHash(content)
 	note := &storage.Note{
-		ID:          generateID(),
+		ID:          GenerateID(),
 		Filename:    name,
 		Title:       fm.Title,
 		Path:        name,
+		Content:     content,
 		ContentHash: hash,
 		WordCount:   WordCount(content),
 		CreatedAt:   time.Now(),
@@ -95,17 +96,20 @@ func (m *Manager) OpenNote(name string) (*storage.Note, string, error) {
 			}
 			content := BuildNoteContent(fm, body)
 			note = &storage.Note{
-				ID:          generateID(),
+				ID:          GenerateID(),
 				Filename:    name,
 				Title:       fm.Title,
 				Path:        name,
+				Content:     content,
 				ContentHash: ComputeHash(content),
 				WordCount:   WordCount(content),
 				CreatedAt:   time.Now(),
 				ModifiedAt:  time.Now(),
 				Tags:        fm.Tags,
 			}
-			m.store.CreateNote(note)
+			if err := m.store.CreateNote(note); err != nil {
+				return nil, "", fmt.Errorf("create note in store: %w", err)
+			}
 		} else {
 			return nil, "", fmt.Errorf("note not found: %s", name)
 		}
@@ -154,10 +158,14 @@ func (m *Manager) SyncFromDisk(noteID string) error {
 	}
 
 	content := string(data)
-	fm, body, _ := ParseFrontmatter(content)
+	fm, body, parseErr := ParseFrontmatter(content)
+	if parseErr != nil {
+		return fmt.Errorf("parse frontmatter: %w", parseErr)
+	}
 
 	note.Title = fm.Title
 	note.Tags = fm.Tags
+	note.Content = content
 	note.ContentHash = ComputeHash(content)
 	note.WordCount = WordCount(body)
 
@@ -181,7 +189,7 @@ func ComputeHash(content string) string {
 	return fmt.Sprintf("%x", h)
 }
 
-func generateID() string {
+func GenerateID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return fmt.Sprintf("%x-%x-%x-%x-%x",

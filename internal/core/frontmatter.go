@@ -14,10 +14,15 @@ type Frontmatter struct {
 	Tags  []string `yaml:"tags"`
 }
 
-var frontmatterRe = regexp.MustCompile(`(?s)^---\n(.*?)\n?---\n?(.*)$`)
+var frontmatterRe = regexp.MustCompile(`(?s)^---[\r]?\n(.*?)[\r]?\n?---[\r]?\n?(.*)$`)
+
+var frontmatterReCRLF = regexp.MustCompile(`(?s)^---\r\n(.*?)\r?\n?---\r?\n?(.*)$`)
 
 func ParseFrontmatter(content string) (Frontmatter, string, error) {
 	matches := frontmatterRe.FindStringSubmatch(content)
+	if matches == nil {
+		matches = frontmatterReCRLF.FindStringSubmatch(content)
+	}
 	if len(matches) < 3 {
 		return Frontmatter{}, content, nil
 	}
@@ -31,20 +36,21 @@ func ParseFrontmatter(content string) (Frontmatter, string, error) {
 }
 
 func BuildFrontmatter(fm Frontmatter) string {
-	var b strings.Builder
-	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("title: %s\n", fm.Title))
+	data := map[string]interface{}{
+		"title": fm.Title,
+	}
 	if fm.Date != "" {
-		b.WriteString(fmt.Sprintf("date: %s\n", fm.Date))
+		data["date"] = fm.Date
 	}
 	if len(fm.Tags) > 0 {
-		b.WriteString("tags:\n")
-		for _, tag := range fm.Tags {
-			b.WriteString(fmt.Sprintf("  - %s\n", tag))
-		}
+		data["tags"] = fm.Tags
 	}
-	b.WriteString("---\n")
-	return b.String()
+
+	b, err := yaml.Marshal(data)
+	if err != nil {
+		return fmt.Sprintf("---\ntitle: %s\n---\n", fm.Title)
+	}
+	return "---\n" + string(b) + "---\n"
 }
 
 func BuildNoteContent(fm Frontmatter, body string) string {

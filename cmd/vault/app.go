@@ -1,11 +1,11 @@
 package main
 
 import (
-	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/ishyverma/vault-sync/internal/config"
 	"github.com/ishyverma/vault-sync/internal/connectors/obsidian"
@@ -61,13 +61,24 @@ func newSyncEngine() (*sync.Engine, error) {
 
 func resolveVaultDir(cfg *config.Config) string {
 	if cfg.Vault.Path != "" {
-		return filepath.Dir(cfg.Vault.Path)
+		return expandPath(filepath.Dir(cfg.Vault.Path))
 	}
 	dir, err := config.VaultDir()
 	if err != nil {
-		return filepath.Join(os.Getenv("HOME"), ".vault")
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".vault")
 	}
 	return dir
+}
+
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
 }
 
 func openInEditor(path string) error {
@@ -94,11 +105,4 @@ func realRunEditor(editor, path string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-func generateID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return fmt.Sprintf("%x-%x-%x-%x-%x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

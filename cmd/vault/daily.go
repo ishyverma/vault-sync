@@ -39,6 +39,9 @@ Examples:
 		if err := openInEditor(notePath); err != nil {
 			return fmt.Errorf("open editor: %w", err)
 		}
+		if err := mgr.SyncFromDisk(note.ID); err != nil {
+			return fmt.Errorf("sync daily note: %w", err)
+		}
 		return nil
 	},
 }

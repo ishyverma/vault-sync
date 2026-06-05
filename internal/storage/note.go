@@ -14,5 +14,6 @@ type Note struct {
 	ModifiedAt  time.Time `json:"modified_at"`
 	Archived    bool      `json:"archived"`
 	Pinned      bool      `json:"pinned"`
+	Content     string    `json:"-"` // full text for FTS indexing (not stored in notes table)
 	Tags        []string  `json:"tags"`
 }
