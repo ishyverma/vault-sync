@@ -141,15 +141,21 @@ List all notes:
 		return fmt.Errorf("create welcome note: %w", err)
 	}
 
-	fm, body, _ := core.ParseFrontmatter(sampleContent)
-	store.CreateNote(&storage.Note{
-		ID:        generateID(),
+	fm, body, parseErr := core.ParseFrontmatter(sampleContent)
+	if parseErr != nil {
+		return fmt.Errorf("parse welcome note frontmatter: %w", parseErr)
+	}
+	if err := store.CreateNote(&storage.Note{
+		ID:        core.GenerateID(),
 		Filename:  "welcome.md",
 		Title:     fm.Title,
 		Path:      "welcome.md",
+		Content:   body,
 		Tags:      fm.Tags,
 		WordCount: core.WordCount(body),
-	})
+	}); err != nil {
+		return fmt.Errorf("create welcome note: %w", err)
+	}
 
 	fmt.Printf("  ✓ Created %s/welcome.md\n", notesDir)
 

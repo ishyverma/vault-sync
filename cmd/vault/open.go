@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -29,12 +28,7 @@ Examples:
 			return fmt.Errorf("open note: %w", err)
 		}
 
-		fullPath := notePath
-		if !filepath.IsAbs(notePath) {
-			fullPath = filepath.Join(mgr.NotesDir(), notePath)
-		}
-
-		if err := openInEditor(fullPath); err != nil {
+		if err := openInEditor(notePath); err != nil {
 			return fmt.Errorf("open editor: %w", err)
 		}
 

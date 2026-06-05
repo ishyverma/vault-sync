@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ishyverma/vault-sync/internal/connectors"
@@ -41,6 +43,7 @@ func (s Status) String() string {
 }
 
 type Engine struct {
+	mu         sync.RWMutex
 	store      *storage.NoteStore
 	connectors map[string]connectors.Connector
 	notesDir   string
@@ -55,7 +58,19 @@ func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
 }
 
 func (e *Engine) RegisterConnector(name string, c connectors.Connector) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.connectors[name] = c
+}
+
+func (e *Engine) getConnectors() map[string]connectors.Connector {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	cp := make(map[string]connectors.Connector, len(e.connectors))
+	for k, v := range e.connectors {
+		cp[k] = v
+	}
+	return cp
 }
 
 func (e *Engine) PushNote(noteID string) error {
@@ -71,10 +86,21 @@ func (e *Engine) PushNote(noteID string) error {
 
 	currentHash := computeHash(content)
 
-	for name, conn := range e.connectors {
+	for name, conn := range e.getConnectors() {
 		state, stateErr := e.store.GetSyncState(noteID, name)
 		if stateErr == nil && state.LastHash == currentHash && state.Status == "synced" {
 			continue
+		}
+
+		if stateErr == nil && state.Status == "conflict" {
+			conflict, checkErr := e.detectConflict(conn, state)
+			if checkErr != nil {
+				e.recordFailure(noteID, name, fmt.Errorf("conflict check: %w", checkErr))
+				continue
+			}
+			if conflict {
+				continue
+			}
 		}
 
 		if err := conn.Connect(); err != nil {
@@ -84,10 +110,16 @@ func (e *Engine) PushNote(noteID string) error {
 
 		if stateErr == nil && state.Status == "synced" {
 			conflict, checkErr := e.detectConflict(conn, state)
-			if checkErr == nil && conflict {
+			if checkErr != nil {
+				e.recordFailure(noteID, name, fmt.Errorf("conflict check: %w", checkErr))
+				continue
+			}
+			if conflict {
 				e.store.UpsertSyncState(&storage.SyncState{
 					NoteID:   noteID,
 					Backend:  name,
+					RemoteID: state.RemoteID,
+					LastHash: state.LastHash,
 					Status:   "conflict",
 					ErrorMsg: "remote file modified externally",
 				})
@@ -128,12 +160,15 @@ func (e *Engine) PushAll() error {
 	if err != nil {
 		return fmt.Errorf("list notes: %w", err)
 	}
+	var firstErr error
 	for _, note := range notes {
 		if err := e.PushNote(note.ID); err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (e *Engine) PullNote(noteID string) error {
@@ -142,7 +177,7 @@ func (e *Engine) PullNote(noteID string) error {
 		return fmt.Errorf("get note: %w", err)
 	}
 
-	for name, conn := range e.connectors {
+	for name, conn := range e.getConnectors() {
 		state, err := e.store.GetSyncState(noteID, name)
 		if err != nil || state.RemoteID == "" {
 			continue
@@ -162,15 +197,29 @@ func (e *Engine) PullNote(noteID string) error {
 			continue
 		}
 
+		localContent, localErr := e.readNoteFile(note.Filename)
+		if localErr == nil {
+			localHash := computeHash(localContent)
+			if localHash != state.LastHash {
+				e.recordPullFailure(noteID, name, fmt.Errorf("local changes conflict with remote changes"))
+				continue
+			}
+		}
+
 		localPath := filepath.Join(e.notesDir, note.Filename)
-		if err := os.WriteFile(localPath, []byte(remoteContent), 0o644); err != nil {
+		if err := atomicWriteLocal(localPath, remoteContent); err != nil {
 			e.recordPullFailure(noteID, name, fmt.Errorf("write local file: %w", err))
 			continue
 		}
 
-		fm, body, _ := core.ParseFrontmatter(remoteContent)
+		fm, body, fmErr := core.ParseFrontmatter(remoteContent)
+		if fmErr != nil {
+			e.recordPullFailure(noteID, name, fmt.Errorf("parse frontmatter: %w", fmErr))
+			continue
+		}
 		note.Title = fm.Title
 		note.Tags = fm.Tags
+		note.Content = remoteContent
 		note.ContentHash = computeHash(remoteContent)
 		note.WordCount = core.WordCount(body)
 		note.ModifiedAt = time.Now().UTC()
@@ -208,13 +257,16 @@ func (e *Engine) PullAll() error {
 		return fmt.Errorf("list notes: %w", err)
 	}
 
+	var firstErr error
 	for _, note := range notes {
 		if err := e.PullNote(note.ID); err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 func (e *Engine) SyncAll() error {
@@ -223,23 +275,25 @@ func (e *Engine) SyncAll() error {
 		return fmt.Errorf("list notes: %w", err)
 	}
 
+	var firstErr error
 	for _, note := range notes {
 		if err := e.PushNote(note.ID); err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-
-	return nil
+	return firstErr
 }
 
 func (e *Engine) SyncStatus(noteID string) ([]*storage.SyncState, error) {
-	var states []*storage.SyncState
-
-	if len(e.connectors) == 0 {
-		return states, nil
+	connectors := e.getConnectors()
+	if len(connectors) == 0 {
+		return nil, nil
 	}
 
-	for name := range e.connectors {
+	var states []*storage.SyncState
+	for name := range connectors {
 		state, err := e.store.GetSyncState(noteID, name)
 		if err != nil {
 			states = append(states, &storage.SyncState{
@@ -256,7 +310,8 @@ func (e *Engine) SyncStatus(noteID string) ([]*storage.SyncState, error) {
 }
 
 func (e *Engine) AllSyncStatuses() ([]*storage.SyncState, error) {
-	if len(e.connectors) == 0 {
+	connectors := e.getConnectors()
+	if len(connectors) == 0 {
 		return nil, nil
 	}
 
@@ -266,7 +321,7 @@ func (e *Engine) AllSyncStatuses() ([]*storage.SyncState, error) {
 	}
 
 	connectorNames := make(map[string]bool)
-	for name := range e.connectors {
+	for name := range connectors {
 		connectorNames[name] = true
 	}
 
@@ -302,12 +357,21 @@ func (e *Engine) recordFailure(noteID, backend string, err error) {
 		SyncedAt:  time.Now().UTC(),
 	})
 
-	e.store.UpsertSyncState(&storage.SyncState{
-		NoteID:   noteID,
-		Backend:  backend,
-		Status:   "failed",
-		ErrorMsg: err.Error(),
-	})
+	existing, stateErr := e.store.GetSyncState(noteID, backend)
+	if stateErr != nil {
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:   noteID,
+			Backend:  backend,
+			Status:   "failed",
+			ErrorMsg: err.Error(),
+		})
+		return
+	}
+
+	existing.Status = "failed"
+	existing.ErrorMsg = err.Error()
+	existing.LastSyncAt = time.Now().UTC()
+	e.store.UpsertSyncState(existing)
 }
 
 func (e *Engine) recordPullFailure(noteID, backend string, err error) {
@@ -318,12 +382,22 @@ func (e *Engine) recordPullFailure(noteID, backend string, err error) {
 		Status:    "failed",
 		SyncedAt:  time.Now().UTC(),
 	})
-	e.store.UpsertSyncState(&storage.SyncState{
-		NoteID:   noteID,
-		Backend:  backend,
-		Status:   "failed",
-		ErrorMsg: err.Error(),
-	})
+
+	existing, stateErr := e.store.GetSyncState(noteID, backend)
+	if stateErr != nil {
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:   noteID,
+			Backend:  backend,
+			Status:   "failed",
+			ErrorMsg: err.Error(),
+		})
+		return
+	}
+
+	existing.Status = "failed"
+	existing.ErrorMsg = err.Error()
+	existing.LastSyncAt = time.Now().UTC()
+	e.store.UpsertSyncState(existing)
 }
 
 func (e *Engine) QueueLength() (int, error) {
@@ -331,12 +405,37 @@ func (e *Engine) QueueLength() (int, error) {
 }
 
 func (e *Engine) readNoteFile(filename string) (string, error) {
+	if filename == "" {
+		return "", fmt.Errorf("empty filename")
+	}
+	if strings.Contains(filename, "..") {
+		return "", fmt.Errorf("invalid filename: %s", filename)
+	}
 	path := filepath.Join(e.notesDir, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func atomicWriteLocal(path, content string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".vault-sync-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	tmp.Sync()
+	tmp.Close()
+
+	return os.Rename(tmpName, path)
 }
 
 func computeHash(content string) string {

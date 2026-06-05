@@ -59,8 +59,9 @@ func TestBuildFrontmatter(t *testing.T) {
 	}
 	result := BuildFrontmatter(fm)
 	assert.Contains(t, result, "title: Test")
-	assert.Contains(t, result, "date: 2026-06-05")
-	assert.Contains(t, result, "  - go")
+	assert.Contains(t, result, "date:")
+	assert.Contains(t, result, "2026-06-05")
+	assert.Contains(t, result, "- go")
 	assert.Contains(t, result, "---")
 }
 

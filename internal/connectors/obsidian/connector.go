@@ -84,7 +84,14 @@ func (c *Connector) TargetDir() string {
 }
 
 func (c *Connector) resolvePath(notePath string) string {
-	return filepath.Join(c.targetDir, notePath)
+	if notePath == "" {
+		return ""
+	}
+	clean := filepath.Clean(notePath)
+	if strings.HasPrefix(clean, "..") || strings.Contains(clean, "..") {
+		return ""
+	}
+	return filepath.Join(c.targetDir, clean)
 }
 
 func atomicWrite(path, content string) error {
@@ -100,6 +107,7 @@ func atomicWrite(path, content string) error {
 		os.Remove(tmpName)
 		return err
 	}
+	tmp.Sync()
 	tmp.Close()
 
 	return os.Rename(tmpName, path)

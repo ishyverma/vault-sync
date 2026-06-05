@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
@@ -26,6 +27,7 @@ type Daemon struct {
 	interval    time.Duration
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
+	syncCh       chan struct{}
 }
 
 func NewDaemon(engine *Engine, notesDir string, interval time.Duration) *Daemon {
@@ -34,6 +36,7 @@ func NewDaemon(engine *Engine, notesDir string, interval time.Duration) *Daemon 
 		notesDir: notesDir,
 		pidPath:  filepath.Join(filepath.Dir(notesDir), "vaultd.pid"),
 		interval: interval,
+		syncCh:   make(chan struct{}, 1),
 	}
 }
 
@@ -74,9 +77,10 @@ func (d *Daemon) Start() error {
 
 	log.Printf("vaultd started — watching %s (poll: %v, obsidian: %v)", d.notesDir, d.interval, hasObsidian)
 
-	d.wg.Add(2)
+	d.wg.Add(3)
 	go d.watchLoop(ctx, watcher)
 	go d.pollLoop(ctx)
+	go d.syncRunner(ctx)
 
 	select {
 	case sig := <-sigCh:
@@ -134,8 +138,8 @@ func (d *Daemon) Status() (bool, int, error) {
 func (d *Daemon) watchLoop(ctx context.Context, watcher *fsnotify.Watcher) {
 	defer d.wg.Done()
 
-	var debouncePush *time.Timer
-	var debouncePushCh <-chan time.Time
+	var debounceTimer *time.Timer
+	var debounceCh <-chan time.Time
 	var pendingEvents []fsnotify.Event
 
 	const debounce = 500 * time.Millisecond
@@ -151,17 +155,17 @@ func (d *Daemon) watchLoop(ctx context.Context, watcher *fsnotify.Watcher) {
 			}
 
 			pendingEvents = append(pendingEvents, event)
-			if debouncePush != nil {
-				debouncePush.Stop()
+			if debounceTimer != nil {
+				debounceTimer.Stop()
 			}
-			debouncePush = time.NewTimer(debounce)
-			debouncePushCh = debouncePush.C
+			debounceTimer = time.NewTimer(debounce)
+			debounceCh = debounceTimer.C
 
-		case <-debouncePushCh:
+		case <-debounceCh:
 			d.processEvents(pendingEvents)
 			pendingEvents = nil
-			debouncePush = nil
-			debouncePushCh = nil
+			debounceTimer = nil
+			debounceCh = nil
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -170,6 +174,9 @@ func (d *Daemon) watchLoop(ctx context.Context, watcher *fsnotify.Watcher) {
 			log.Printf("watcher error: %v", err)
 
 		case <-ctx.Done():
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
 			return
 		}
 	}
@@ -184,7 +191,7 @@ func (d *Daemon) processEvents(events []fsnotify.Event) {
 
 		if dir == d.notesDir {
 			pushNotes = append(pushNotes, filename)
-		} else if d.obsidianDir != "" && strings.HasPrefix(dir, d.obsidianDir) {
+		} else if d.obsidianDir != "" && (dir == d.obsidianDir || strings.HasPrefix(dir, d.obsidianDir+string(filepath.Separator))) {
 			pullNotes = append(pullNotes, filename)
 		}
 	}
@@ -192,9 +199,30 @@ func (d *Daemon) processEvents(events []fsnotify.Event) {
 	pushNotes = unique(pushNotes)
 	pullNotes = unique(pullNotes)
 
-	for _, fn := range pushNotes {
+	common := intersect(pushNotes, pullNotes)
+	if len(common) > 0 {
+		for _, fn := range common {
+			note, err := d.engine.store.FindNoteByFilename(fn)
+			if err != nil {
+				continue
+			}
+			localHash, remoteHash := d.compareNoteHashes(note)
+			if localHash == remoteHash {
+				continue
+			}
+			if err := d.engine.PullNote(note.ID); err != nil {
+				log.Printf("sync %s (common): %v", fn, err)
+			}
+		}
+	}
+
+	pushOnly := subtract(pushNotes, pullNotes)
+	pullOnly := subtract(pullNotes, pushNotes)
+
+	for _, fn := range pushOnly {
 		note, err := d.engine.store.FindNoteByFilename(fn)
 		if err != nil {
+			log.Printf("unknown file %s — skipping push", fn)
 			continue
 		}
 		if err := d.engine.PushNote(note.ID); err != nil {
@@ -202,7 +230,7 @@ func (d *Daemon) processEvents(events []fsnotify.Event) {
 		}
 	}
 
-	for _, fn := range pullNotes {
+	for _, fn := range pullOnly {
 		note, err := d.engine.store.FindNoteByFilename(fn)
 		if err != nil {
 			log.Printf("new obsidian file %s — importing", fn)
@@ -215,27 +243,44 @@ func (d *Daemon) processEvents(events []fsnotify.Event) {
 	}
 }
 
+func (d *Daemon) compareNoteHashes(note *storage.Note) (string, string) {
+	state, err := d.engine.store.GetSyncState(note.ID, "obsidian")
+	if err != nil {
+		return "", ""
+	}
+	return note.ContentHash, state.LastHash
+}
+
 func (d *Daemon) importFromObsidian(filename string) {
 	remotePath := filepath.Join(d.obsidianDir, filename)
 	data, err := os.ReadFile(remotePath)
 	if err != nil {
+		log.Printf("import %s: read error: %v", filename, err)
 		return
 	}
 
 	content := string(data)
 	localPath := filepath.Join(d.notesDir, filename)
 	if err := os.WriteFile(localPath, data, 0o644); err != nil {
+		log.Printf("import %s: write error: %v", filename, err)
 		return
 	}
 
-	fm, body, _ := core.ParseFrontmatter(content)
-	noteID := fmt.Sprintf("%x", computeHash(content))[:16]
+	fm, body, parseErr := core.ParseFrontmatter(content)
+	if parseErr != nil {
+		log.Printf("import %s: parse error: %v", filename, parseErr)
+		return
+	}
+
+	h := sha256.Sum256([]byte(content + filename))
+	noteID := fmt.Sprintf("%x", h)
 
 	note := &storage.Note{
 		ID:          noteID,
 		Filename:    filename,
 		Title:       fm.Title,
 		Path:        filename,
+		Content:     content,
 		ContentHash: computeHash(content),
 		WordCount:   core.WordCount(body),
 		CreatedAt:   time.Now().UTC(),
@@ -244,6 +289,7 @@ func (d *Daemon) importFromObsidian(filename string) {
 	}
 
 	if err := d.engine.store.CreateNote(note); err != nil {
+		log.Printf("import %s: db error: %v", filename, err)
 		return
 	}
 
@@ -255,6 +301,8 @@ func (d *Daemon) importFromObsidian(filename string) {
 		LastHash:   note.ContentHash,
 		Status:     "synced",
 	})
+
+	log.Printf("imported %s from obsidian", filename)
 }
 
 func (d *Daemon) pollLoop(ctx context.Context) {
@@ -266,6 +314,22 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
+			select {
+			case d.syncCh <- struct{}{}:
+			default:
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (d *Daemon) syncRunner(ctx context.Context) {
+	defer d.wg.Done()
+
+	for {
+		select {
+		case <-d.syncCh:
 			if err := d.engine.PushAll(); err != nil {
 				log.Printf("push error: %v", err)
 			}
@@ -281,7 +345,7 @@ func (d *Daemon) pollLoop(ctx context.Context) {
 }
 
 func (d *Daemon) writePID() error {
-	return os.WriteFile(d.pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0o644)
+	return os.WriteFile(d.pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600)
 }
 
 func (d *Daemon) readPID() (int, error) {
@@ -289,7 +353,11 @@ func (d *Daemon) readPID() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(strings.TrimSpace(string(data)))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid PID")
+	}
+	return pid, nil
 }
 
 func (d *Daemon) removePID() {
@@ -309,6 +377,34 @@ func unique(strs []string) []string {
 	for _, s := range strs {
 		if !seen[s] {
 			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+func intersect(a, b []string) []string {
+	set := make(map[string]bool)
+	for _, s := range b {
+		set[s] = true
+	}
+	var result []string
+	for _, s := range a {
+		if set[s] {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+func subtract(a, b []string) []string {
+	set := make(map[string]bool)
+	for _, s := range b {
+		set[s] = true
+	}
+	var result []string
+	for _, s := range a {
+		if !set[s] {
 			result = append(result, s)
 		}
 	}

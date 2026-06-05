@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ishyverma/vault-sync/internal/config"
@@ -105,7 +105,9 @@ var stopCmd = &cobra.Command{
 		notesDir := filepath.Join(vaultDir, "notes")
 
 		store := storage.NewNoteStore(vaultDir)
-		store.Init()
+		if err := store.Init(); err != nil {
+			return fmt.Errorf("init store: %w", err)
+		}
 
 		engine := sync.NewEngine(store, notesDir)
 		daemon := sync.NewDaemon(engine, notesDir, 60*time.Second)
@@ -133,14 +135,16 @@ var statusCmd = &cobra.Command{
 		notesDir := filepath.Join(vaultDir, "notes")
 
 		store := storage.NewNoteStore(vaultDir)
-		store.Init()
+		if err := store.Init(); err != nil {
+			return fmt.Errorf("init store: %w", err)
+		}
 
 		engine := sync.NewEngine(store, notesDir)
 		daemon := sync.NewDaemon(engine, notesDir, 60*time.Second)
 
 		running, pid, err := daemon.Status()
 		if err != nil {
-			log.Fatalf("check status: %v", err)
+			return fmt.Errorf("check status: %w", err)
 		}
 
 		if running {
@@ -164,11 +168,22 @@ func init() {
 
 func resolveVaultDir(cfg *config.Config) string {
 	if cfg.Vault.Path != "" {
-		return filepath.Dir(cfg.Vault.Path)
+		return expandPath(filepath.Dir(cfg.Vault.Path))
 	}
 	dir, err := config.VaultDir()
 	if err != nil {
-		return filepath.Join(os.Getenv("HOME"), ".vault")
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".vault")
 	}
 	return dir
+}
+
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
 }

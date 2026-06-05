@@ -323,7 +323,9 @@ func (s *NoteStore) SearchNotes(query string) ([]*Note, error) {
 		ORDER BY n.modified_at DESC
 		LIMIT 50`, query)
 	if err != nil {
-		rows.Close()
+		if rows != nil {
+			rows.Close()
+		}
 		rows, err = s.db.Query(`
 			SELECT id, filename, COALESCE(title,''), path, COALESCE(folder,''), COALESCE(content_hash,''),
 			       COALESCE(word_count,0), created_at, modified_at, COALESCE(archived,0), COALESCE(pinned,0)
@@ -408,8 +410,12 @@ func (s *NoteStore) insertNoteFTS(tx *sql.Tx, note *Note) error {
 	if err != nil {
 		return err
 	}
+	bodyText := note.Content
+	if bodyText == "" {
+		bodyText = note.Title
+	}
 	_, err = tx.Exec(`INSERT INTO notes_fts(docid, title, content) VALUES (?, ?, ?)`,
-		rowid, note.Title, note.Title)
+		rowid, note.Title, bodyText)
 	return err
 }
 
