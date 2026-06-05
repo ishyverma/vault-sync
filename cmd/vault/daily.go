@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -31,7 +32,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("create daily note: %w", err)
 			}
-			notePath = mgr.NotesDir() + "/" + note.Filename
+			notePath = filepath.Join(mgr.NotesDir(), note.Filename)
 		}
 
 		fmt.Printf("✓ Daily note: %s\n", note.Filename)
