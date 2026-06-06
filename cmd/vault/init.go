@@ -43,7 +43,7 @@ func detectEditor() string {
 			return e
 		}
 	}
-	return "nvim"
+	return ""
 }
 
 func runInit(cmd *cobra.Command) error {
@@ -105,7 +105,8 @@ func runInit(cmd *cobra.Command) error {
 	fmt.Println()
 
 	notesSample := filepath.Join(notesDir, "welcome.md")
-	sampleContent := strings.TrimSpace(fmt.Sprintf(`---
+	if _, err := os.Stat(notesSample); os.IsNotExist(err) {
+		sampleContent := strings.TrimSpace(fmt.Sprintf(`---
 title: Welcome to VaultSync
 date: %s
 tags: [vaultsync, getting-started]
@@ -137,27 +138,30 @@ List all notes:
 - Run vault --help for all commands
 `, timeNow(), notesDir))
 
-	if err := os.WriteFile(notesSample, []byte(sampleContent), 0o644); err != nil {
-		return fmt.Errorf("create welcome note: %w", err)
-	}
+		if err := os.WriteFile(notesSample, []byte(sampleContent), 0o644); err != nil {
+			return fmt.Errorf("create welcome note: %w", err)
+		}
 
-	fm, body, parseErr := core.ParseFrontmatter(sampleContent)
-	if parseErr != nil {
-		return fmt.Errorf("parse welcome note frontmatter: %w", parseErr)
-	}
-	if err := store.CreateNote(&storage.Note{
-		ID:        core.GenerateID(),
-		Filename:  "welcome.md",
-		Title:     fm.Title,
-		Path:      "welcome.md",
-		Content:   body,
-		Tags:      fm.Tags,
-		WordCount: core.WordCount(body),
-	}); err != nil {
-		return fmt.Errorf("create welcome note: %w", err)
-	}
+		fm, body, parseErr := core.ParseFrontmatter(sampleContent)
+		if parseErr != nil {
+			return fmt.Errorf("parse welcome note frontmatter: %w", parseErr)
+		}
+		if err := store.CreateNote(&storage.Note{
+			ID:        core.GenerateID(),
+			Filename:  "welcome.md",
+			Title:     fm.Title,
+			Path:      "welcome.md",
+			Content:   body,
+			Tags:      fm.Tags,
+			WordCount: core.WordCount(body),
+		}); err != nil {
+			return fmt.Errorf("create welcome note: %w", err)
+		}
 
-	fmt.Printf("  ✓ Created %s/welcome.md\n", notesDir)
+		fmt.Printf("  ✓ Created %s/welcome.md\n", notesDir)
+	} else {
+		fmt.Printf("  ✓ %s/welcome.md already exists, skipping\n", notesDir)
+	}
 
 	if err := writeDefaultTemplates(templatesDir); err != nil {
 		return fmt.Errorf("write templates: %w", err)

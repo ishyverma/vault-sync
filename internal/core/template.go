@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"strings"
 	"text/template"
 	"time"
@@ -29,7 +30,7 @@ func NewTemplateEngine() *TemplateEngine {
 func (e *TemplateEngine) Render(name, title string) (string, error) {
 	tmplStr, ok := e.templates[name]
 	if !ok {
-		tmplStr = e.templates["blank"]
+		return "", fmt.Errorf("unknown template %q (available: %s)", name, strings.Join(e.Names(), ", "))
 	}
 
 	tmpl, err := template.New(name).Parse(tmplStr)

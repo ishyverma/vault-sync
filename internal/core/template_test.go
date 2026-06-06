@@ -42,9 +42,9 @@ func TestTemplateEngine_Project(t *testing.T) {
 
 func TestTemplateEngine_UnknownName(t *testing.T) {
 	e := NewTemplateEngine()
-	content, err := e.Render("nonexistent", "Fallback")
-	require.NoError(t, err)
-	assert.Contains(t, content, "Fallback")
+	_, err := e.Render("nonexistent", "Fallback")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown template")
 }
 
 func TestTemplateEngine_Names(t *testing.T) {

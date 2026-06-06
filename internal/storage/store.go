@@ -64,7 +64,7 @@ func (s *NoteStore) migrate() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS notes (
 		id            TEXT PRIMARY KEY,
-		filename      TEXT NOT NULL,
+		filename      TEXT NOT NULL UNIQUE,
 		title         TEXT,
 		path          TEXT NOT NULL,
 		folder        TEXT DEFAULT '',
