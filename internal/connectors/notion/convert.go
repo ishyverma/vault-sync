@@ -139,7 +139,7 @@ func convertNode(n ast.Node, source []byte) (*Block, error) {
 func extractRichText(n ast.Node, source []byte) []RichText {
 	content := string(n.Text(source))
 	if strings.TrimSpace(content) == "" {
-		return nil
+		return []RichText{}
 	}
 	return []RichText{{Type: "text", Text: &TextContent{Content: content}}}
 }

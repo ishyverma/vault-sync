@@ -89,6 +89,8 @@ func (e *Engine) PushNote(noteID string) error {
 
 	currentHash := computeHash(content)
 
+	var backendErrs []string
+
 	for name, conn := range e.getConnectors() {
 		state, stateErr := e.store.GetSyncState(noteID, name)
 		if stateErr == nil && state.LastHash == currentHash && state.Status == "synced" {
@@ -99,6 +101,7 @@ func (e *Engine) PushNote(noteID string) error {
 			conflict, checkErr := e.detectConflict(conn, state)
 			if checkErr != nil {
 				e.recordFailure(noteID, name, fmt.Errorf("conflict check: %w", checkErr))
+				backendErrs = append(backendErrs, fmt.Sprintf("[%s] conflict check: %v", name, checkErr))
 				continue
 			}
 			if conflict {
@@ -108,6 +111,7 @@ func (e *Engine) PushNote(noteID string) error {
 
 		if err := conn.Connect(); err != nil {
 			e.recordFailure(noteID, name, err)
+			backendErrs = append(backendErrs, fmt.Sprintf("[%s] connect: %v", name, err))
 			continue
 		}
 
@@ -115,6 +119,7 @@ func (e *Engine) PushNote(noteID string) error {
 			conflict, checkErr := e.detectConflict(conn, state)
 			if checkErr != nil {
 				e.recordFailure(noteID, name, fmt.Errorf("conflict check: %w", checkErr))
+				backendErrs = append(backendErrs, fmt.Sprintf("[%s] conflict check: %v", name, checkErr))
 				continue
 			}
 			if conflict {
@@ -130,9 +135,15 @@ func (e *Engine) PushNote(noteID string) error {
 			}
 		}
 
-		remoteID, pushErr := conn.Push(note, content)
+		existingID := ""
+		if stateErr == nil {
+			existingID = state.RemoteID
+		}
+
+		remoteID, pushErr := conn.Push(note, content, existingID)
 		if pushErr != nil {
 			e.recordFailure(noteID, name, pushErr)
+			backendErrs = append(backendErrs, fmt.Sprintf("[%s] %v", name, pushErr))
 			continue
 		}
 
@@ -153,6 +164,10 @@ func (e *Engine) PushNote(noteID string) error {
 			LastHash:   currentHash,
 			Status:     "synced",
 		})
+	}
+
+	if len(backendErrs) > 0 {
+		return fmt.Errorf("push errors: %s", strings.Join(backendErrs, "; "))
 	}
 
 	return nil
@@ -317,7 +332,7 @@ func (e *Engine) ResolveConflict(noteID, backend, strategy string) error {
 		if err := conn.Connect(); err != nil {
 			return fmt.Errorf("connect: %w", err)
 		}
-		remoteID, pushErr := conn.Push(note, content)
+		remoteID, pushErr := conn.Push(note, content, state.RemoteID)
 		if pushErr != nil {
 			return fmt.Errorf("push local to %s: %w", backend, pushErr)
 		}

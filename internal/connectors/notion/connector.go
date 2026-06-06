@@ -51,7 +51,7 @@ func (c *Connector) Status() (bool, error) {
 	return true, nil
 }
 
-func (c *Connector) Push(note *storage.Note, content string) (string, error) {
+func (c *Connector) Push(note *storage.Note, content string, remoteID string) (string, error) {
 	if c.client == nil {
 		if err := c.Connect(); err != nil {
 			return "", err
@@ -70,13 +70,25 @@ func (c *Connector) Push(note *storage.Note, content string) (string, error) {
 
 	properties := buildProperties(note)
 
-	// Look up existing remote_id via sync_state
-	// If caller already resolved remoteID we'd use it; here we rely on the engine to pass context
-	// For now: always create a new page under the target page
 	if c.targetPageID == "" {
 		return "", fmt.Errorf("notion target page not configured: set target_page_id in config")
 	}
 
+	// Update existing page
+	if remoteID != "" {
+		if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Properties: properties}); err != nil {
+			return "", fmt.Errorf("update notion page: %w", err)
+		}
+
+		// Replace blocks: delete all existing, then append new ones
+		if err := c.replaceBlocks(remoteID, blocks); err != nil {
+			return "", fmt.Errorf("replace blocks: %w", err)
+		}
+
+		return remoteID, nil
+	}
+
+	// Create new page
 	page, err := c.client.CreatePage(&CreatePageRequest{
 		Parent:     Parent{Type: "page_id", PageID: c.targetPageID},
 		Properties: properties,
@@ -87,6 +99,27 @@ func (c *Connector) Push(note *storage.Note, content string) (string, error) {
 	}
 
 	return page.ID, nil
+}
+
+func (c *Connector) replaceBlocks(pageID string, newBlocks []Block) error {
+	existing, err := c.client.GetBlocks(pageID)
+	if err != nil {
+		return fmt.Errorf("get existing blocks: %w", err)
+	}
+
+	for _, b := range existing {
+		if err := c.client.DeleteBlock(b.ID); err != nil {
+			return fmt.Errorf("delete block %s: %w", b.ID, err)
+		}
+	}
+
+	if len(newBlocks) > 0 {
+		if err := c.client.AppendBlocks(pageID, &AppendBlocksRequest{Children: newBlocks}); err != nil {
+			return fmt.Errorf("append blocks: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (c *Connector) Pull(remoteID string) (string, error) {
@@ -127,29 +160,12 @@ func (c *Connector) Delete(remoteID string) error {
 }
 
 func buildProperties(note *storage.Note) map[string]Property {
-	props := map[string]Property{
+	return map[string]Property{
 		"title": {
 			Type:  "title",
 			Title: []RichText{{Type: "text", Text: &TextContent{Content: note.Title}}},
 		},
 	}
-
-	if len(note.Tags) > 0 {
-		opts := make([]Select, len(note.Tags))
-		for i, tag := range note.Tags {
-			opts[i] = Select{Name: tag}
-		}
-		props["Tags"] = Property{Type: "multi_select", MultiSelect: opts}
-	}
-
-	if !note.CreatedAt.IsZero() {
-		props["Created"] = Property{
-			Type: "date",
-			Date: &DateValue{Start: note.CreatedAt.Format("2006-01-02")},
-		}
-	}
-
-	return props
 }
 
 func frontmatterFromDisk(notesDir, filename string) (string, error) {

@@ -47,7 +47,7 @@ func (c *Connector) Status() (bool, error) {
 	return true, nil
 }
 
-func (c *Connector) Push(note *storage.Note, content string) (string, error) {
+func (c *Connector) Push(note *storage.Note, content string, remoteID string) (string, error) {
 	remotePath := c.resolvePath(note.Path)
 	if remotePath == "" {
 		remotePath = c.resolvePath(note.Filename)

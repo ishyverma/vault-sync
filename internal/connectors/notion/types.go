@@ -20,6 +20,7 @@ const (
 )
 
 type Block struct {
+	ID           string       `json:"id,omitempty"`
 	Object       string       `json:"object,omitempty"`
 	Type         BlockType    `json:"type"`
 	Paragraph    *TextBlock   `json:"paragraph,omitempty"`
@@ -173,6 +174,10 @@ type CreatePageRequest struct {
 type UpdatePageRequest struct {
 	Properties map[string]Property `json:"properties,omitempty"`
 	Archived   *bool               `json:"archived,omitempty"`
+}
+
+type UpdateBlockRequest struct {
+	Archived *bool `json:"archived,omitempty"`
 }
 
 type AppendBlocksRequest struct {

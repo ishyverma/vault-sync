@@ -190,6 +190,12 @@ func (c *Client) DeletePage(pageID string) error {
 	return c.do("PATCH", "/pages/"+pageID, req, nil)
 }
 
+func (c *Client) DeleteBlock(blockID string) error {
+	archived := true
+	req := &UpdateBlockRequest{Archived: &archived}
+	return c.do("PATCH", "/blocks/"+blockID, req, nil)
+}
+
 func (c *Client) Status() error {
 	_, err := c.Search("")
 	return err
