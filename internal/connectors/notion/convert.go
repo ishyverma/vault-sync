@@ -36,7 +36,10 @@ func walkNode(n gast.Node, source []byte, blocks *[]Block) error {
 		}
 
 		if child.HasChildren() {
-			if child.Kind() == extensionast.KindTable {
+			skip := child.Kind() == extensionast.KindTable ||
+				child.Kind() == gast.KindBlockquote ||
+				child.Kind() == gast.KindListItem
+			if skip {
 				continue
 			}
 			if err := walkNode(child, source, blocks); err != nil {
@@ -101,19 +104,29 @@ func convertNode(n gast.Node, source []byte) (*Block, error) {
 		}
 		list, ok := parent.(*gast.List)
 		if !ok {
-			return &Block{Type: BlockBulletedListItem, BulletedItem: &TextBlock{RichText: extractRichText(n, source)}}, nil
+			block := &Block{Type: BlockBulletedListItem, BulletedItem: &TextBlock{RichText: extractRichText(n, source)}}
+			collectListChildren(n, source, block)
+			return block, nil
 		}
 
 		rt := extractRichText(n, source)
 		cb := extractCheckbox(listItem, source)
 		if cb != nil {
-			return &Block{Type: BlockToDo, ToDo: &ToDoBlock{RichText: rt, Checked: *cb}}, nil
+			block := &Block{Type: BlockToDo, ToDo: &ToDoBlock{RichText: rt, Checked: *cb}}
+			collectListChildren(n, source, block)
+			return block, nil
 		}
 
+		block := &Block{}
 		if list.IsOrdered() {
-			return &Block{Type: BlockNumberedListItem, NumberedItem: &TextBlock{RichText: rt}}, nil
+			block.Type = BlockNumberedListItem
+			block.NumberedItem = &TextBlock{RichText: rt}
+		} else {
+			block.Type = BlockBulletedListItem
+			block.BulletedItem = &TextBlock{RichText: rt}
 		}
-		return &Block{Type: BlockBulletedListItem, BulletedItem: &TextBlock{RichText: rt}}, nil
+		collectListChildren(n, source, block)
+		return block, nil
 
 	case gast.KindCodeBlock:
 		content := string(n.Text(nil))
@@ -183,11 +196,34 @@ func convertTable(n gast.Node, source []byte) *Block {
 	return &Block{Type: BlockTable, Table: tbl}
 }
 
+func collectListChildren(n gast.Node, source []byte, parent *Block) {
+	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+		if child.Kind() != gast.KindList {
+			continue
+		}
+		for li := child.FirstChild(); li != nil; li = li.NextSibling() {
+			if li.Kind() != gast.KindListItem {
+				continue
+			}
+			sub, err := convertNode(li, source)
+			if err != nil || sub == nil {
+				continue
+			}
+			parent.Children = append(parent.Children, *sub)
+		}
+	}
+}
+
 func extractRichText(n gast.Node, source []byte) []RichText {
 	var result []RichText
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		rt := convertInline(child, source)
-		result = append(result, rt...)
+		if rt != nil {
+			result = append(result, rt...)
+		} else if child.HasChildren() {
+			inner := extractRichText(child, source)
+			result = append(result, inner...)
+		}
 	}
 	if len(result) == 0 {
 		content := string(n.Text(source))
@@ -274,6 +310,33 @@ func BlocksToMarkdown(blocks []Block) (string, error) {
 }
 
 func blockToMarkdown(b Block) (string, error) {
+	line, err := blockToMarkdownLine(b)
+	if err != nil {
+		return "", err
+	}
+
+	if len(b.Children) == 0 || b.Type == BlockTable || b.Type == BlockCode || b.Type == BlockQuote || b.Type == BlockCallout {
+		return line, nil
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(strings.TrimRight(line, "\n"))
+
+	for _, child := range b.Children {
+		childContent, err := blockToMarkdown(child)
+		if err != nil {
+			return "", err
+		}
+		lines := strings.Split(strings.TrimRight(childContent, "\n"), "\n")
+		for _, l := range lines {
+			buf.WriteString("\n  " + l)
+		}
+	}
+	buf.WriteString("\n")
+	return buf.String(), nil
+}
+
+func blockToMarkdownLine(b Block) (string, error) {
 	switch b.Type {
 	case BlockParagraph:
 		return richTextToAnnotated(b.Paragraph.RichText) + "\n", nil
@@ -307,7 +370,25 @@ func blockToMarkdown(b Block) (string, error) {
 	case BlockDivider:
 		return "---\n", nil
 	case BlockTable:
+		if len(b.Children) > 0 && (b.Table == nil || len(b.Table.Children) == 0) {
+			if b.Table == nil {
+				b.Table = &TableBlock{}
+			}
+			b.Table.Children = b.Children
+			width := 0
+			for _, row := range b.Table.Children {
+				if row.TableRow != nil && len(row.TableRow.Cells) > width {
+					width = len(row.TableRow.Cells)
+				}
+			}
+			b.Table.TableWidth = width
+		}
 		return tableToMarkdown(b.Table), nil
+	case BlockChildPage:
+		if b.ChildPage != nil {
+			return "[child page: " + b.ChildPage.Title + "]\n", nil
+		}
+		return "[child page]\n", nil
 	default:
 		return "", nil
 	}
@@ -353,13 +434,18 @@ func richTextToAnnotated(rt []RichText) string {
 	for _, r := range rt {
 		if r.Text != nil {
 			content := r.Text.Content
+			linkURL := r.Href
+			if linkURL == "" && r.Text.Link != nil {
+				linkURL = r.Text.Link.URL
+			}
+
 			if r.Annotations != nil {
 				if r.Annotations.Code {
 					b.WriteString("`" + content + "`")
 					continue
 				}
-				if r.Href != "" {
-					b.WriteString("[" + content + "](" + r.Href + ")")
+				if linkURL != "" {
+					b.WriteString("[" + content + "](" + linkURL + ")")
 					continue
 				}
 				if r.Annotations.Bold && r.Annotations.Italic {
@@ -375,8 +461,8 @@ func richTextToAnnotated(rt []RichText) string {
 					continue
 				}
 			}
-			if r.Href != "" {
-				b.WriteString("[" + content + "](" + r.Href + ")")
+			if linkURL != "" {
+				b.WriteString("[" + content + "](" + linkURL + ")")
 				continue
 			}
 			b.WriteString(content)

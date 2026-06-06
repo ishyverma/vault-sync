@@ -142,24 +142,39 @@ func (c *Client) AppendBlocks(pageID string, req *AppendBlocksRequest) error {
 }
 
 func (c *Client) GetBlocks(pageID string) ([]Block, error) {
-	var blocks []Block
-	cursor := ""
-	for {
-		path := "/blocks/" + pageID + "/children?page_size=100"
-		if cursor != "" {
-			path += "&start_cursor=" + cursor
+	blocks, err := c.fetchBlockPage(pageID, "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range blocks {
+		if blocks[i].HasChildren {
+			children, err := c.GetBlocks(blocks[i].ID)
+			if err != nil {
+				return nil, fmt.Errorf("fetch children of %s: %w", blocks[i].ID, err)
+			}
+			blocks[i].Children = children
 		}
-		var resp ListBlocksResponse
-		if err := c.do("GET", path, nil, &resp); err != nil {
-			return nil, err
-		}
-		blocks = append(blocks, resp.Results...)
-		if !resp.HasMore {
-			break
-		}
-		cursor = resp.NextCursor
 	}
 	return blocks, nil
+}
+
+func (c *Client) fetchBlockPage(pageID, cursor string) ([]Block, error) {
+	path := "/blocks/" + pageID + "/children?page_size=100"
+	if cursor != "" {
+		path += "&start_cursor=" + cursor
+	}
+	var resp ListBlocksResponse
+	if err := c.do("GET", path, nil, &resp); err != nil {
+		return nil, err
+	}
+	if resp.HasMore {
+		rest, err := c.fetchBlockPage(pageID, resp.NextCursor)
+		if err != nil {
+			return nil, err
+		}
+		return append(resp.Results, rest...), nil
+	}
+	return resp.Results, nil
 }
 
 func (c *Client) Search(query string) ([]Page, error) {

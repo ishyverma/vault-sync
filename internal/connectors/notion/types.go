@@ -3,40 +3,63 @@ package notion
 type BlockType string
 
 const (
-	BlockParagraph       BlockType = "paragraph"
-	BlockHeading1        BlockType = "heading_1"
-	BlockHeading2        BlockType = "heading_2"
-	BlockHeading3        BlockType = "heading_3"
+	BlockParagraph        BlockType = "paragraph"
+	BlockHeading1         BlockType = "heading_1"
+	BlockHeading2         BlockType = "heading_2"
+	BlockHeading3         BlockType = "heading_3"
 	BlockBulletedListItem BlockType = "bulleted_list_item"
 	BlockNumberedListItem BlockType = "numbered_list_item"
-	BlockToDo            BlockType = "to_do"
-	BlockCode            BlockType = "code"
-	BlockQuote           BlockType = "quote"
-	BlockCallout         BlockType = "callout"
-	BlockDivider         BlockType = "divider"
-	BlockTable           BlockType = "table"
-	BlockTableRow        BlockType = "table_row"
-	BlockImage           BlockType = "image"
+	BlockToDo             BlockType = "to_do"
+	BlockCode             BlockType = "code"
+	BlockQuote            BlockType = "quote"
+	BlockCallout          BlockType = "callout"
+	BlockDivider          BlockType = "divider"
+	BlockTable            BlockType = "table"
+	BlockTableRow         BlockType = "table_row"
+	BlockImage            BlockType = "image"
+	BlockBookmark         BlockType = "bookmark"
+	BlockEquation         BlockType = "equation"
+	BlockEmbed            BlockType = "embed"
+	BlockVideo            BlockType = "video"
+	BlockFile             BlockType = "file"
+	BlockPDF              BlockType = "pdf"
+	BlockChildPage        BlockType = "child_page"
+	BlockChildDatabase    BlockType = "child_database"
+	BlockBreadcrumb       BlockType = "breadcrumb"
+	BlockColumnList       BlockType = "column_list"
+	BlockColumn           BlockType = "column"
+	BlockLinkPreview      BlockType = "link_preview"
+	BlockLinkToPage       BlockType = "link_to_page"
+	BlockSyncedBlock      BlockType = "synced_block"
+	BlockTemplate         BlockType = "template"
+	BlockTableOfContents  BlockType = "table_of_contents"
 )
 
 type Block struct {
-	ID           string       `json:"id,omitempty"`
-	Object       string       `json:"object,omitempty"`
-	Type         BlockType    `json:"type"`
-	Paragraph    *TextBlock   `json:"paragraph,omitempty"`
-	Heading1     *TextBlock   `json:"heading_1,omitempty"`
-	Heading2     *TextBlock   `json:"heading_2,omitempty"`
-	Heading3     *TextBlock   `json:"heading_3,omitempty"`
-	BulletedItem *TextBlock   `json:"bulleted_list_item,omitempty"`
-	NumberedItem *TextBlock   `json:"numbered_list_item,omitempty"`
-	ToDo         *ToDoBlock   `json:"to_do,omitempty"`
-	Code         *CodeBlock   `json:"code,omitempty"`
-	Quote        *TextBlock   `json:"quote,omitempty"`
-	Callout      *CalloutBlock `json:"callout,omitempty"`
-	Divider      *DividerBlock `json:"divider,omitempty"`
-	Table        *TableBlock  `json:"table,omitempty"`
-	TableRow     *TableRowBlock `json:"table_row,omitempty"`
-	Children     []Block      `json:"children,omitempty"`
+	ID           string          `json:"id,omitempty"`
+	Object       string          `json:"object,omitempty"`
+	Type         BlockType       `json:"type"`
+	HasChildren  bool            `json:"has_children,omitempty"`
+	Archived     bool            `json:"archived,omitempty"`
+	Paragraph    *TextBlock      `json:"paragraph,omitempty"`
+	Heading1     *TextBlock      `json:"heading_1,omitempty"`
+	Heading2     *TextBlock      `json:"heading_2,omitempty"`
+	Heading3     *TextBlock      `json:"heading_3,omitempty"`
+	BulletedItem *TextBlock      `json:"bulleted_list_item,omitempty"`
+	NumberedItem *TextBlock      `json:"numbered_list_item,omitempty"`
+	ToDo         *ToDoBlock      `json:"to_do,omitempty"`
+	Code         *CodeBlock      `json:"code,omitempty"`
+	Quote        *TextBlock      `json:"quote,omitempty"`
+	Callout      *CalloutBlock   `json:"callout,omitempty"`
+	Divider      *DividerBlock   `json:"divider,omitempty"`
+	Table        *TableBlock     `json:"table,omitempty"`
+	TableRow     *TableRowBlock  `json:"table_row,omitempty"`
+	ChildPage    *ChildPageBlock `json:"child_page,omitempty"`
+	Children     []Block         `json:"children,omitempty"`
+}
+
+type ChildPageBlock struct {
+	Title string `json:"title"`
 }
 
 type TextBlock struct {
