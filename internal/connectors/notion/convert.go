@@ -5,12 +5,16 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
+	gast "github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	extensionast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 )
 
 func MarkdownToBlocks(markdown string) ([]Block, error) {
-	md := goldmark.New()
+	md := goldmark.New(
+		goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.Linkify),
+	)
 	source := []byte(markdown)
 	doc := md.Parser().Parse(text.NewReader(source))
 
@@ -21,7 +25,7 @@ func MarkdownToBlocks(markdown string) ([]Block, error) {
 	return blocks, nil
 }
 
-func walkNode(n ast.Node, source []byte, blocks *[]Block) error {
+func walkNode(n gast.Node, source []byte, blocks *[]Block) error {
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		block, err := convertNode(child, source)
 		if err != nil {
@@ -32,6 +36,9 @@ func walkNode(n ast.Node, source []byte, blocks *[]Block) error {
 		}
 
 		if child.HasChildren() {
+			if child.Kind() == extensionast.KindTable {
+				continue
+			}
 			if err := walkNode(child, source, blocks); err != nil {
 				return err
 			}
@@ -40,13 +47,13 @@ func walkNode(n ast.Node, source []byte, blocks *[]Block) error {
 	return nil
 }
 
-func convertNode(n ast.Node, source []byte) (*Block, error) {
+func convertNode(n gast.Node, source []byte) (*Block, error) {
 	switch n.Kind() {
-	case ast.KindDocument:
+	case gast.KindDocument:
 		return nil, nil
 
-	case ast.KindHeading:
-		heading := n.(*ast.Heading)
+	case gast.KindHeading:
+		heading := n.(*gast.Heading)
 		var btype BlockType
 		switch heading.Level {
 		case 1:
@@ -76,23 +83,23 @@ func convertNode(n ast.Node, source []byte) (*Block, error) {
 			}(),
 		}, nil
 
-	case ast.KindParagraph:
+	case gast.KindParagraph:
 		rt := extractRichText(n, source)
 		if len(rt) == 0 {
 			return nil, nil
 		}
 		return &Block{Type: BlockParagraph, Paragraph: &TextBlock{RichText: rt}}, nil
 
-	case ast.KindList:
+	case gast.KindList:
 		return nil, nil
 
-	case ast.KindListItem:
-		listItem := n.(*ast.ListItem)
+	case gast.KindListItem:
+		listItem := n.(*gast.ListItem)
 		parent := n.Parent()
 		if parent == nil {
 			return nil, nil
 		}
-		list, ok := parent.(*ast.List)
+		list, ok := parent.(*gast.List)
 		if !ok {
 			return &Block{Type: BlockBulletedListItem, BulletedItem: &TextBlock{RichText: extractRichText(n, source)}}, nil
 		}
@@ -108,19 +115,19 @@ func convertNode(n ast.Node, source []byte) (*Block, error) {
 		}
 		return &Block{Type: BlockBulletedListItem, BulletedItem: &TextBlock{RichText: rt}}, nil
 
-	case ast.KindCodeBlock:
+	case gast.KindCodeBlock:
 		content := string(n.Text(nil))
 		rt := []RichText{{Type: "text", Text: &TextContent{Content: strings.TrimSuffix(content, "\n")}}}
 		return &Block{Type: BlockCode, Code: &CodeBlock{RichText: rt, Language: ""}}, nil
 
-	case ast.KindFencedCodeBlock:
-		fcb := n.(*ast.FencedCodeBlock)
+	case gast.KindFencedCodeBlock:
+		fcb := n.(*gast.FencedCodeBlock)
 		lang := string(fcb.Language(source))
 		content := string(n.Text(source))
 		rt := []RichText{{Type: "text", Text: &TextContent{Content: strings.TrimSuffix(content, "\n")}}}
 		return &Block{Type: BlockCode, Code: &CodeBlock{RichText: rt, Language: lang}}, nil
 
-	case ast.KindBlockquote:
+	case gast.KindBlockquote:
 		rt := extractRichText(n, source)
 		content := string(n.Text(source))
 		if strings.HasPrefix(strings.TrimSpace(content), "[!") {
@@ -128,15 +135,55 @@ func convertNode(n ast.Node, source []byte) (*Block, error) {
 		}
 		return &Block{Type: BlockQuote, Quote: &TextBlock{RichText: rt}}, nil
 
-	case ast.KindThematicBreak:
+	case gast.KindThematicBreak:
 		return &Block{Type: BlockDivider, Divider: &DividerBlock{}}, nil
+
+	case extensionast.KindTable:
+		return convertTable(n, source), nil
 
 	default:
 		return nil, nil
 	}
 }
 
-func extractRichText(n ast.Node, source []byte) []RichText {
+func convertTable(n gast.Node, source []byte) *Block {
+	tbl := &TableBlock{
+		Children: []Block{},
+	}
+
+	for row := n.FirstChild(); row != nil; row = row.NextSibling() {
+		isHeader := row.Kind() == extensionast.KindTableHeader
+		if isHeader {
+			tbl.HasColumnHeader = true
+		}
+
+		if row.Kind() != extensionast.KindTableHeader && row.Kind() != extensionast.KindTableRow {
+			continue
+		}
+
+		cells := [][]RichText{}
+		for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+			if cell.Kind() != extensionast.KindTableCell {
+				continue
+			}
+			rt := extractRichText(cell, source)
+			cells = append(cells, rt)
+		}
+
+		if len(cells) > tbl.TableWidth {
+			tbl.TableWidth = len(cells)
+		}
+
+		tbl.Children = append(tbl.Children, Block{
+			Type:     BlockTableRow,
+			TableRow: &TableRowBlock{Cells: cells},
+		})
+	}
+
+	return &Block{Type: BlockTable, Table: tbl}
+}
+
+func extractRichText(n gast.Node, source []byte) []RichText {
 	var result []RichText
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		rt := convertInline(child, source)
@@ -151,17 +198,17 @@ func extractRichText(n ast.Node, source []byte) []RichText {
 	return result
 }
 
-func convertInline(n ast.Node, source []byte) []RichText {
+func convertInline(n gast.Node, source []byte) []RichText {
 	switch n.Kind() {
-	case ast.KindText:
+	case gast.KindText:
 		content := string(n.Text(source))
 		if strings.TrimSpace(content) == "" {
 			return nil
 		}
 		return []RichText{{Type: "text", Text: &TextContent{Content: content}}}
 
-	case ast.KindEmphasis:
-		em := n.(*ast.Emphasis)
+	case gast.KindEmphasis:
+		em := n.(*gast.Emphasis)
 		children := extractRichText(n, source)
 		for i := range children {
 			if children[i].Annotations == nil {
@@ -175,7 +222,7 @@ func convertInline(n ast.Node, source []byte) []RichText {
 		}
 		return children
 
-	case ast.KindCodeSpan:
+	case gast.KindCodeSpan:
 		content := string(n.Text(source))
 		return []RichText{{
 			Type:        "text",
@@ -183,8 +230,8 @@ func convertInline(n ast.Node, source []byte) []RichText {
 			Annotations: &Annotations{Code: true},
 		}}
 
-	case ast.KindLink:
-		link := n.(*ast.Link)
+	case gast.KindLink:
+		link := n.(*gast.Link)
 		children := extractRichText(n, source)
 		url := string(link.Destination)
 		for i := range children {
@@ -197,7 +244,7 @@ func convertInline(n ast.Node, source []byte) []RichText {
 	}
 }
 
-func extractCheckbox(listItem *ast.ListItem, source []byte) *bool {
+func extractCheckbox(listItem *gast.ListItem, source []byte) *bool {
 	first := listItem.FirstChild()
 	if first == nil {
 		return nil
