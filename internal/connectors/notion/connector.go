@@ -58,10 +58,12 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		}
 	}
 
-	_, body, _ := core.ParseFrontmatter(content)
+	fm, body, _ := core.ParseFrontmatter(content)
 	if body == "" {
 		body = content
 	}
+
+	body = embedTags(body, fm.Tags)
 
 	blocks, err := MarkdownToBlocks(body)
 	if err != nil {
@@ -99,6 +101,23 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 	}
 
 	return page.ID, nil
+}
+
+func embedTags(body string, tags []string) string {
+	if len(tags) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString("**Tags:** ")
+	for i, tag := range tags {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("`" + tag + "`")
+	}
+	b.WriteString("\n\n")
+	b.WriteString(body)
+	return b.String()
 }
 
 func (c *Connector) replaceBlocks(pageID string, newBlocks []Block) error {
@@ -194,26 +213,4 @@ func propertiesToFrontmatter(props map[string]Property) core.Frontmatter {
 		}
 	}
 	return fm
-}
-
-func richTextToAnnotated(rt []RichText) string {
-	var b strings.Builder
-	for _, r := range rt {
-		if r.Text != nil {
-			content := r.Text.Content
-			if r.Annotations != nil {
-				if r.Annotations.Code {
-					content = "`" + content + "`"
-				}
-				if r.Annotations.Bold {
-					content = "**" + content + "**"
-				}
-				if r.Annotations.Italic {
-					content = "*" + content + "*"
-				}
-			}
-			b.WriteString(content)
-		}
-	}
-	return b.String()
 }

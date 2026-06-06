@@ -137,11 +137,64 @@ func convertNode(n ast.Node, source []byte) (*Block, error) {
 }
 
 func extractRichText(n ast.Node, source []byte) []RichText {
-	content := string(n.Text(source))
-	if strings.TrimSpace(content) == "" {
-		return []RichText{}
+	var result []RichText
+	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+		rt := convertInline(child, source)
+		result = append(result, rt...)
 	}
-	return []RichText{{Type: "text", Text: &TextContent{Content: content}}}
+	if len(result) == 0 {
+		content := string(n.Text(source))
+		if strings.TrimSpace(content) != "" {
+			result = append(result, RichText{Type: "text", Text: &TextContent{Content: content}})
+		}
+	}
+	return result
+}
+
+func convertInline(n ast.Node, source []byte) []RichText {
+	switch n.Kind() {
+	case ast.KindText:
+		content := string(n.Text(source))
+		if strings.TrimSpace(content) == "" {
+			return nil
+		}
+		return []RichText{{Type: "text", Text: &TextContent{Content: content}}}
+
+	case ast.KindEmphasis:
+		em := n.(*ast.Emphasis)
+		children := extractRichText(n, source)
+		for i := range children {
+			if children[i].Annotations == nil {
+				children[i].Annotations = &Annotations{}
+			}
+			if em.Level == 1 {
+				children[i].Annotations.Italic = true
+			} else {
+				children[i].Annotations.Bold = true
+			}
+		}
+		return children
+
+	case ast.KindCodeSpan:
+		content := string(n.Text(source))
+		return []RichText{{
+			Type:        "text",
+			Text:        &TextContent{Content: content},
+			Annotations: &Annotations{Code: true},
+		}}
+
+	case ast.KindLink:
+		link := n.(*ast.Link)
+		children := extractRichText(n, source)
+		url := string(link.Destination)
+		for i := range children {
+			children[i].Href = url
+		}
+		return children
+
+	default:
+		return nil
+	}
 }
 
 func extractCheckbox(listItem *ast.ListItem, source []byte) *bool {
@@ -174,23 +227,23 @@ func BlocksToMarkdown(blocks []Block) (string, error) {
 func blockToMarkdown(b Block) (string, error) {
 	switch b.Type {
 	case BlockParagraph:
-		return richTextToPlain(b.Paragraph.RichText) + "\n", nil
+		return richTextToAnnotated(b.Paragraph.RichText) + "\n", nil
 	case BlockHeading1:
-		return "# " + richTextToPlain(b.Heading1.RichText) + "\n", nil
+		return "# " + richTextToAnnotated(b.Heading1.RichText) + "\n", nil
 	case BlockHeading2:
-		return "## " + richTextToPlain(b.Heading2.RichText) + "\n", nil
+		return "## " + richTextToAnnotated(b.Heading2.RichText) + "\n", nil
 	case BlockHeading3:
-		return "### " + richTextToPlain(b.Heading3.RichText) + "\n", nil
+		return "### " + richTextToAnnotated(b.Heading3.RichText) + "\n", nil
 	case BlockBulletedListItem:
-		return "- " + richTextToPlain(b.BulletedItem.RichText) + "\n", nil
+		return "- " + richTextToAnnotated(b.BulletedItem.RichText) + "\n", nil
 	case BlockNumberedListItem:
-		return "1. " + richTextToPlain(b.NumberedItem.RichText) + "\n", nil
+		return "1. " + richTextToAnnotated(b.NumberedItem.RichText) + "\n", nil
 	case BlockToDo:
 		prefix := "- [ ] "
 		if b.ToDo.Checked {
 			prefix = "- [x] "
 		}
-		return prefix + richTextToPlain(b.ToDo.RichText) + "\n", nil
+		return prefix + richTextToAnnotated(b.ToDo.RichText) + "\n", nil
 	case BlockCode:
 		lang := b.Code.Language
 		if lang == "" {
@@ -199,9 +252,9 @@ func blockToMarkdown(b Block) (string, error) {
 		content := richTextToPlain(b.Code.RichText)
 		return "```" + lang + "\n" + content + "\n```\n", nil
 	case BlockQuote:
-		return "> " + richTextToPlain(b.Quote.RichText) + "\n", nil
+		return "> " + richTextToAnnotated(b.Quote.RichText) + "\n", nil
 	case BlockCallout:
-		return "> [!NOTE]\n> " + richTextToPlain(b.Callout.RichText) + "\n", nil
+		return "> [!NOTE]\n> " + richTextToAnnotated(b.Callout.RichText) + "\n", nil
 	case BlockDivider:
 		return "---\n", nil
 	case BlockTable:
@@ -222,7 +275,7 @@ func tableToMarkdown(t *TableBlock) string {
 		}
 		var cells []string
 		for _, cell := range row.TableRow.Cells {
-			cells = append(cells, richTextToPlain(cell))
+			cells = append(cells, richTextToAnnotated(cell))
 		}
 		buf.WriteString("| " + strings.Join(cells, " | ") + " |\n")
 		if i == 0 {
@@ -241,6 +294,43 @@ func richTextToPlain(rt []RichText) string {
 	for _, r := range rt {
 		if r.Text != nil {
 			b.WriteString(r.Text.Content)
+		}
+	}
+	return b.String()
+}
+
+func richTextToAnnotated(rt []RichText) string {
+	var b strings.Builder
+	for _, r := range rt {
+		if r.Text != nil {
+			content := r.Text.Content
+			if r.Annotations != nil {
+				if r.Annotations.Code {
+					b.WriteString("`" + content + "`")
+					continue
+				}
+				if r.Href != "" {
+					b.WriteString("[" + content + "](" + r.Href + ")")
+					continue
+				}
+				if r.Annotations.Bold && r.Annotations.Italic {
+					b.WriteString("***" + content + "***")
+					continue
+				}
+				if r.Annotations.Bold {
+					b.WriteString("**" + content + "**")
+					continue
+				}
+				if r.Annotations.Italic {
+					b.WriteString("*" + content + "*")
+					continue
+				}
+			}
+			if r.Href != "" {
+				b.WriteString("[" + content + "](" + r.Href + ")")
+				continue
+			}
+			b.WriteString(content)
 		}
 	}
 	return b.String()

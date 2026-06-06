@@ -112,12 +112,12 @@ type Equation struct {
 }
 
 type Annotations struct {
-	Bold          bool   `json:"bold"`
-	Italic        bool   `json:"italic"`
-	Strikethrough bool   `json:"strikethrough"`
-	Underline     bool   `json:"underline"`
-	Code          bool   `json:"code"`
-	Color         string `json:"color"`
+	Bold          bool   `json:"bold,omitempty"`
+	Italic        bool   `json:"italic,omitempty"`
+	Strikethrough bool   `json:"strikethrough,omitempty"`
+	Underline     bool   `json:"underline,omitempty"`
+	Code          bool   `json:"code,omitempty"`
+	Color         string `json:"color,omitempty"`
 }
 
 type Page struct {
