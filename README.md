@@ -10,14 +10,14 @@
     <a href="https://sqlite.org"><img src="https://img.shields.io/badge/storage-SQLite-003B57" alt="Storage"></a>
   </p>
   <p>
-    <code>vim my-note.md</code> &nbsp;→&nbsp; <code>:w</code> &nbsp;→&nbsp; <code>✓ Synced to Obsidian</code>
+    <code>vim my-note.md</code> &nbsp;→&nbsp; <code>:w</code> &nbsp;→&nbsp; <code>✓ Synced to Obsidian & Notion</code>
   </p>
   <br>
 </div>
 
 ---
 
-**VaultSync** is a local-first, terminal-native note-taking application. You write in Vim (or any editor), save, and it syncs — silently, instantly, everywhere. It features a full-screen terminal UI dashboard, full-text search, and pluggable sync backends.
+**VaultSync** is a local-first, terminal-native note-taking application. You write in Vim (or any editor), save, and it syncs — silently, instantly, to Obsidian **and** Notion. It features a full-screen terminal UI dashboard, full-text search, and pluggable sync backends.
 
 ---
 
@@ -45,6 +45,14 @@
 - **Background daemon** (`vaultd`) — polls for changes at configurable intervals
 - **Vim/Neovim plugins** — auto-sync on `:w` via `BufWritePost` autocmd
 - **Sync state tracking** — per-note, per-backend status in SQLite
+
+### Notion Sync
+- **Bidirectional sync** — push to and pull from any Notion page
+- **Full markdown↔blocks conversion** — headings, paragraphs, lists, code, tables, blockquotes, callouts, dividers, to-do, child pages
+- **Inline formatting** — bold, italic, code, links converted to Notion annotations
+- **Smart push** — creates new pages or updates existing ones with block replacement
+- **Recursive pull** — traverses `has_children` blocks for complete content
+- **YAML frontmatter round-trip** — title, tags, date preserved via Notion properties
 
 ### Storage
 - **SQLite** — WAL mode, concurrent readers + writer with busy timeout
@@ -88,6 +96,18 @@ vault sync
 vaultd start
 ```
 
+### Connect Notion
+
+```bash
+vault connect notion --token ntn_xxxx --target-page-id <page-id>
+
+# Push all notes to Notion
+vault sync
+
+# Pull latest from Notion
+vault pull
+```
+
 ---
 
 ## CLI Reference
@@ -106,8 +126,10 @@ vaultd start
 | `vault daily` | Open or create today's daily note (`YYYY-MM-DD.md`) |
 | `vault sync` | Sync all notes to all connected backends |
 | `vault push [filename]` | Push a single note to all backends |
+| `vault pull` | Pull all notes from all backends |
 | `vault sync status` | Show per-note sync state |
 | `vault connect obsidian --path [path]` | Configure Obsidian sync backend |
+| `vault connect notion --token [key] --target-page-id [id]` | Configure Notion sync backend |
 | `vault` / `vault ui` | Launch the terminal UI dashboard |
 | `vaultd start` | Start background sync daemon |
 | `vaultd stop` | Stop background daemon |
@@ -202,7 +224,7 @@ The terminal UI provides six views accessible via number keys or Tab:
 │   ┌──────────────────────────────────────────────────────────┐  │
 │   │                   Connectors                             │  │
 │   │  ┌─────────────────────┐  ┌──────────────────────────┐   │  │
-│   │  │  Obsidian Connector │  │  Notion Connector (WIP)  │   │  │
+│   │  │  Obsidian Connector │  │  Notion Connector        │   │  │
 │   │  └─────────────────────┘  └──────────────────────────┘   │  │
 │   └──────────────────────────────────────────────────────────┘  │
 │                               │                                  │
@@ -223,10 +245,11 @@ The terminal UI provides six views accessible via number keys or Tab:
   → vault push <file> (called by BufWritePost autocmd)
     → Note Manager reads file, parses frontmatter
       → Update SQLite index (metadata + FTS)
-        → Sync Engine computes checksum
-          → If changed, enqueue SyncJob
-            → Worker pool processes queue
-              → Obsidian: atomic write to vault folder
+             → Sync Engine computes checksum
+               → If changed, enqueue SyncJob
+                 → Worker pool processes queue
+                   → Obsidian: atomic write to vault folder
+                   → Notion: Markdown→Blocks conversion, API push
 ```
 
 ---
@@ -247,7 +270,7 @@ vaultsync/
 │   │   ├── daily.go        ┃  vault daily
 │   │   ├── push.go         ┃  vault push / sync
 │   │   ├── status.go       ┃  vault sync status
-│   │   ├── connect.go      ┃  vault connect obsidian
+│   │   ├── connect.go      ┃  vault connect obsidian / notion
 │   │   ├── ui.go           ┃  vault ui (TUI)
 │   │   ├── app.go          ┃  Shared engine/manager setup
 │   │   └── cmd_test.go     ┖  CLI integration tests
@@ -267,7 +290,7 @@ vaultsync/
 │   ├── connectors/
 │   │   ├── connector.go    ← Connector interface
 │   │   ├── obsidian/       ← Obsidian file-sync connector
-│   │   ├── notion/         ← Notion API connector (WIP)
+│   │   ├── notion/         ← Notion API connector
 │   │   └── git/            ← Git auto-commit connector (WIP)
 │   ├── storage/
 │   │   ├── store.go        ← SQLite connection, schema, CRUD
@@ -360,8 +383,8 @@ subfolder = "VaultSync"
 | **Phase 0** | ✅ Complete | Core note management, SQLite, CLI commands, templates |
 | **Phase 1** | ✅ Complete | Obsidian sync, daemon, Vim plugins, conflict detection |
 | **Phase 2** | ✅ Complete | TUI Dashboard, note browser, search, conflict resolver |
-| **Phase 3** | 🔜 Next | Notion sync via API (OAuth, markdown ↔ blocks conversion) |
-| **Phase 4** | ⏳ Planned | Advanced conflict resolution, offline queue, retry logic |
+| **Phase 3** | ✅ Complete | Notion sync via API (OAuth, markdown ↔ blocks conversion) |
+| **Phase 4** | 🔜 Next | Advanced conflict resolution, offline queue, retry logic |
 | **Phase 5** | ⏳ Planned | Version history, export, backlinks, graph view |
 | **Phase 6** | ⏳ Planned | Distribution, Homebrew, install script, docs site |
 
