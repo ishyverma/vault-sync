@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ishyverma/vault-sync/internal/config"
+	"github.com/ishyverma/vault-sync/internal/connectors/notion"
 	"github.com/ishyverma/vault-sync/internal/connectors/obsidian"
 	"github.com/ishyverma/vault-sync/internal/core"
 	"github.com/ishyverma/vault-sync/internal/storage"
@@ -54,6 +55,16 @@ func newSyncEngine() (*sync.Engine, error) {
 			cfg.Backends.Obsidian.Wikilinks,
 		)
 		engine.RegisterConnector("obsidian", obs)
+	}
+
+	if cfg.Backends.Notion.Enabled && cfg.Backends.Notion.Token != "" {
+		conn := notion.NewConnector(
+			cfg.Backends.Notion.Token,
+			cfg.Backends.Notion.TargetPageID,
+			cfg.Backends.Notion.DatabaseID,
+			notesDir,
+		)
+		engine.RegisterConnector("notion", conn)
 	}
 
 	return engine, nil

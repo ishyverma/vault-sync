@@ -55,10 +55,11 @@ var syncCmd = &cobra.Command{
 	Long: `Pushes all local notes to every connected backend (Obsidian, Notion, etc.).
 
 Notes that are already synced (matching content hash) are skipped automatically.
-Use --force to re-push everything.`,
+Use --force to re-push everything. Use --pull to also pull remote changes.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
+		doPull, _ := cmd.Flags().GetBool("pull")
 
 		engine, err := newSyncEngine()
 		if err != nil {
@@ -85,7 +86,37 @@ Use --force to re-push everything.`,
 			}
 		}
 
+		if doPull {
+			if err := engine.PullAll(); err != nil {
+				return fmt.Errorf("pull all: %w", err)
+			}
+		}
+
 		fmt.Println("✓ Sync complete")
+		return nil
+	},
+}
+
+var pullCmd = &cobra.Command{
+	Use:   "pull",
+	Short: "Pull remote changes from all connected backends",
+	Long: `Fetches updates from every connected backend (Obsidian, Notion) and writes
+them to the local notes directory.
+
+Notes that haven't changed remotely are skipped. If both local and remote
+have changed since the last sync, the conflict is flagged.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		engine, err := newSyncEngine()
+		if err != nil {
+			return fmt.Errorf("sync engine: %w", err)
+		}
+
+		if err := engine.PullAll(); err != nil {
+			return fmt.Errorf("pull all: %w", err)
+		}
+
+		fmt.Println("✓ Pull complete")
 		return nil
 	},
 }
@@ -93,5 +124,7 @@ Use --force to re-push everything.`,
 func init() {
 	rootCmd.AddCommand(pushCmd)
 	rootCmd.AddCommand(syncCmd)
+	rootCmd.AddCommand(pullCmd)
 	syncCmd.Flags().BoolP("force", "f", false, "Re-push all notes regardless of sync state")
+	syncCmd.Flags().Bool("pull", false, "Also pull remote changes after push")
 }
