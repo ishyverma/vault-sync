@@ -58,6 +58,9 @@ func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
 }
 
 func (e *Engine) RegisterConnector(name string, c connectors.Connector) {
+	if c == nil {
+		panic("sync: RegisterConnector called with nil connector")
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.connectors[name] = c
