@@ -193,6 +193,8 @@ func extractRichText(n gast.Node, source []byte) []RichText {
 		content := string(n.Text(source))
 		if strings.TrimSpace(content) != "" {
 			result = append(result, RichText{Type: "text", Text: &TextContent{Content: content}})
+		} else {
+			return []RichText{}
 		}
 	}
 	return result
