@@ -276,6 +276,21 @@ func (s *NoteStore) DeleteNote(id string) error {
 		return err
 	}
 
+	_, err = tx.Exec(`DELETE FROM sync_state WHERE note_id = ?`, id)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`DELETE FROM sync_queue WHERE note_id = ?`, id)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`DELETE FROM sync_history WHERE note_id = ?`, id)
+	if err != nil {
+		return err
+	}
+
 	return tx.Commit()
 }
 

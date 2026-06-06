@@ -27,7 +27,7 @@ You write in Vim. You save. It syncs — silently, instantly, everywhere.
 Complete documentation available at https://vaultsync.dev`,
 	Version: version,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return cmd.Help()
+		return runTUI()
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,

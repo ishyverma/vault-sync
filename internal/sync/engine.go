@@ -286,6 +286,110 @@ func (e *Engine) SyncAll() error {
 	return firstErr
 }
 
+func (e *Engine) ResolveConflict(noteID, backend, strategy string) error {
+	note, err := e.store.GetNote(noteID)
+	if err != nil {
+		return fmt.Errorf("get note: %w", err)
+	}
+
+	conns := e.getConnectors()
+	conn, ok := conns[backend]
+	if !ok {
+		return fmt.Errorf("backend not registered: %s", backend)
+	}
+
+	state, err := e.store.GetSyncState(noteID, backend)
+	if err != nil {
+		return fmt.Errorf("get sync state: %w", err)
+	}
+
+	switch strategy {
+	case "local":
+		content, err := e.readNoteFile(note.Filename)
+		if err != nil {
+			return fmt.Errorf("read local file: %w", err)
+		}
+		currentHash := computeHash(content)
+
+		if err := conn.Connect(); err != nil {
+			return fmt.Errorf("connect: %w", err)
+		}
+		remoteID, pushErr := conn.Push(note, content)
+		if pushErr != nil {
+			return fmt.Errorf("push local to %s: %w", backend, pushErr)
+		}
+
+		e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+			NoteID:    noteID,
+			Backend:   backend,
+			Direction: "push",
+			Status:    "resolved_local",
+			SyncedAt:  time.Now().UTC(),
+			Hash:      currentHash,
+		})
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:     noteID,
+			Backend:    backend,
+			RemoteID:   remoteID,
+			LastSyncAt: time.Now().UTC(),
+			LastHash:   currentHash,
+			Status:     "synced",
+		})
+
+	case "remote":
+		if err := conn.Connect(); err != nil {
+			return fmt.Errorf("connect: %w", err)
+		}
+		remoteContent, pullErr := conn.Pull(state.RemoteID)
+		if pullErr != nil {
+			return fmt.Errorf("pull from %s: %w", backend, pullErr)
+		}
+		remoteHash := computeHash(remoteContent)
+
+		localPath := filepath.Join(e.notesDir, note.Filename)
+		if err := atomicWriteLocal(localPath, remoteContent); err != nil {
+			return fmt.Errorf("write local file: %w", err)
+		}
+
+		fm, body, fmErr := core.ParseFrontmatter(remoteContent)
+		if fmErr != nil {
+			return fmt.Errorf("parse frontmatter: %w", fmErr)
+		}
+		note.Title = fm.Title
+		note.Tags = fm.Tags
+		note.Content = remoteContent
+		note.ContentHash = computeHash(remoteContent)
+		note.WordCount = core.WordCount(body)
+		note.ModifiedAt = time.Now().UTC()
+
+		if err := e.store.UpdateNote(note); err != nil {
+			return fmt.Errorf("update store: %w", err)
+		}
+
+		e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+			NoteID:    noteID,
+			Backend:   backend,
+			Direction: "pull",
+			Status:    "resolved_remote",
+			SyncedAt:  time.Now().UTC(),
+			Hash:      remoteHash,
+		})
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:     noteID,
+			Backend:    backend,
+			RemoteID:   state.RemoteID,
+			LastSyncAt: time.Now().UTC(),
+			LastHash:   remoteHash,
+			Status:     "synced",
+		})
+
+	default:
+		return fmt.Errorf("unknown conflict resolution strategy: %s", strategy)
+	}
+
+	return nil
+}
+
 func (e *Engine) SyncStatus(noteID string) ([]*storage.SyncState, error) {
 	connectors := e.getConnectors()
 	if len(connectors) == 0 {
