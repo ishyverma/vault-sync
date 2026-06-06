@@ -23,7 +23,7 @@ type mockConnector struct {
 func (m *mockConnector) Name() string          { return m.name }
 func (m *mockConnector) Connect() error        { return nil }
 func (m *mockConnector) Status() (bool, error) { return true, nil }
-func (m *mockConnector) Push(note *storage.Note, content string) (string, error) {
+func (m *mockConnector) Push(note *storage.Note, content string, remoteID string) (string, error) {
 	m.pushCall++
 	if m.pushErr != nil {
 		return "", m.pushErr
@@ -183,7 +183,8 @@ func TestConnectorFailure(t *testing.T) {
 
 	createTestNote(t, store, notesDir, "n1", "fail.md", "content")
 	err := engine.PushNote("n1")
-	require.NoError(t, err) // errors are per-connector, not fatal
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "push errors")
 
 	state, err := store.GetSyncState("n1", "obsidian")
 	require.NoError(t, err)

@@ -77,12 +77,14 @@ Use --force to re-push everything. Use --pull to also pull remote changes.`,
 			}
 			for _, n := range notes {
 				if err := engine.PushNote(n.ID); err != nil {
-					return fmt.Errorf("sync %s: %w", n.Filename, err)
+					fmt.Fprintf(cmd.ErrOrStderr(), "⚠  %s: %v\n", n.Filename, err)
+				} else {
+					fmt.Printf("✓ %s\n", n.Filename)
 				}
 			}
 		} else {
 			if err := engine.SyncAll(); err != nil {
-				return fmt.Errorf("sync all: %w", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠  %v\n", err)
 			}
 		}
 

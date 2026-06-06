@@ -66,7 +66,7 @@ func TestPush_CreatesFile(t *testing.T) {
 		Title:    "My Note",
 	}
 
-	remoteID, err := c.Push(note, "---\ntitle: My Note\n---\n\nBody content")
+	remoteID, err := c.Push(note, "---\ntitle: My Note\n---\n\nBody content", "")
 	require.NoError(t, err)
 
 	expectedPath := filepath.Join(c.targetDir, "my-note.md")
@@ -87,7 +87,7 @@ func TestPush_WithSubfolder(t *testing.T) {
 		Folder:   "work",
 	}
 
-	remoteID, err := c.Push(note, "---\ntitle: Meeting\n---\n\nNotes")
+	remoteID, err := c.Push(note, "---\ntitle: Meeting\n---\n\nNotes", "")
 	require.NoError(t, err)
 
 	expectedPath := filepath.Join(c.targetDir, "work", "meeting.md")
@@ -99,10 +99,10 @@ func TestPush_OverwritesExisting(t *testing.T) {
 	c, _, _ := newTestConnector(t)
 	note := &storage.Note{ID: "test-3", Filename: "update.md", Path: "update.md"}
 
-	_, err := c.Push(note, "---\ntitle: V1\n---\n\nFirst version")
+	_, err := c.Push(note, "---\ntitle: V1\n---\n\nFirst version", "")
 	require.NoError(t, err)
 
-	_, err = c.Push(note, "---\ntitle: V2\n---\n\nSecond version")
+	_, err = c.Push(note, "---\ntitle: V2\n---\n\nSecond version", "")
 	require.NoError(t, err)
 
 	expectedPath := filepath.Join(c.targetDir, "update.md")
@@ -115,7 +115,7 @@ func TestPull_ReturnsContent(t *testing.T) {
 	note := &storage.Note{ID: "test-4", Filename: "pull-test.md", Path: "pull-test.md"}
 	content := "---\ntitle: Pull Test\n---\n\nPull body"
 
-	remoteID, err := c.Push(note, content)
+	remoteID, err := c.Push(note, content, "")
 	require.NoError(t, err)
 
 	got, err := c.Pull(remoteID)
@@ -134,7 +134,7 @@ func TestDelete_RemovesFile(t *testing.T) {
 	note := &storage.Note{ID: "test-5", Filename: "delete-me.md", Path: "delete-me.md"}
 	content := "---\ntitle: Delete Me\n---"
 
-	remoteID, err := c.Push(note, content)
+	remoteID, err := c.Push(note, content, "")
 	require.NoError(t, err)
 	assert.FileExists(t, remoteID)
 
