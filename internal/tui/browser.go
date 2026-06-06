@@ -44,12 +44,16 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "pgup":
 			m.notePreview.HalfViewUp()
+			return m, nil
 		case "pgdown":
 			m.notePreview.HalfViewDown()
+			return m, nil
 		case "g":
 			m.notePreview.GotoTop()
+			return m, nil
 		case "G":
 			m.notePreview.GotoBottom()
+			return m, nil
 		}
 	}
 

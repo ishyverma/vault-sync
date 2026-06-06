@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,6 +40,10 @@ func (m model) updateConflict(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		notePath := m.manager.NotesDir() + "/" + note.Filename
+		if _, err := os.Stat(notePath); err != nil {
+			m.err = fmt.Errorf("note file missing: %w", err)
+			return m, nil
+		}
 		if err := openEditor(notePath); err != nil {
 			m.err = fmt.Errorf("open editor: %w", err)
 			return m, nil

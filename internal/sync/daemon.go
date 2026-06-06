@@ -109,6 +109,7 @@ func (d *Daemon) Stop() error {
 	}
 
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		d.removePID()
 		return fmt.Errorf("signal daemon: %w", err)
 	}
 

@@ -24,7 +24,7 @@ func (m model) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if err := openEditor(notePath); err != nil {
 			m.err = fmt.Errorf("open editor: %w", err)
 		}
-		return m, m.loadNotes()
+		return m, tea.Batch(m.loadNotes(), syncAllCmd(m.engine))
 	case "o":
 		return m.switchView(browserView)
 	case "s":
