@@ -2,6 +2,7 @@ package sync
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ishyverma/vault-sync/internal/connectors"
+	"github.com/ishyverma/vault-sync/internal/connectors/notion"
 	"github.com/ishyverma/vault-sync/internal/core"
 	"github.com/ishyverma/vault-sync/internal/storage"
 )
@@ -203,7 +205,7 @@ func (e *Engine) PullNote(noteID string) error {
 
 		remoteContent, pullErr := conn.Pull(state.RemoteID)
 		if pullErr != nil {
-			if os.IsNotExist(pullErr) {
+			if errors.Is(pullErr, notion.ErrNotFound) {
 				continue
 			}
 			e.recordPullFailure(noteID, name, pullErr)
@@ -460,7 +462,7 @@ func (e *Engine) AllSyncStatuses() ([]*storage.SyncState, error) {
 func (e *Engine) detectConflict(conn connectors.Connector, state *storage.SyncState) (bool, error) {
 	content, err := conn.Pull(state.RemoteID)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, notion.ErrNotFound) {
 			return false, nil
 		}
 		return false, err
@@ -554,8 +556,15 @@ func atomicWriteLocal(path, content string) error {
 		os.Remove(tmpName)
 		return err
 	}
-	tmp.Sync()
-	tmp.Close()
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
 
 	return os.Rename(tmpName, path)
 }

@@ -102,10 +102,12 @@ func convertNode(n gast.Node, source []byte) (*Block, error) {
 		if parent == nil {
 			return nil, nil
 		}
-		list, ok := parent.(*gast.List)
-		if !ok {
+		list, isList := parent.(*gast.List)
+		if !isList {
 			block := &Block{Type: BlockBulletedListItem, BulletedItem: &TextBlock{RichText: extractRichText(n, source)}}
-			collectListChildren(n, source, block)
+			if err := collectListChildren(n, source, block); err != nil {
+				return nil, err
+			}
 			return block, nil
 		}
 
@@ -113,7 +115,9 @@ func convertNode(n gast.Node, source []byte) (*Block, error) {
 		cb := extractCheckbox(listItem, source)
 		if cb != nil {
 			block := &Block{Type: BlockToDo, ToDo: &ToDoBlock{RichText: rt, Checked: *cb}}
-			collectListChildren(n, source, block)
+			if err := collectListChildren(n, source, block); err != nil {
+				return nil, err
+			}
 			return block, nil
 		}
 
@@ -125,7 +129,9 @@ func convertNode(n gast.Node, source []byte) (*Block, error) {
 			block.Type = BlockBulletedListItem
 			block.BulletedItem = &TextBlock{RichText: rt}
 		}
-		collectListChildren(n, source, block)
+		if err := collectListChildren(n, source, block); err != nil {
+			return nil, err
+		}
 		return block, nil
 
 	case gast.KindCodeBlock:
@@ -196,7 +202,7 @@ func convertTable(n gast.Node, source []byte) *Block {
 	return &Block{Type: BlockTable, Table: tbl}
 }
 
-func collectListChildren(n gast.Node, source []byte, parent *Block) {
+func collectListChildren(n gast.Node, source []byte, parent *Block) error {
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		if child.Kind() != gast.KindList {
 			continue
@@ -206,12 +212,16 @@ func collectListChildren(n gast.Node, source []byte, parent *Block) {
 				continue
 			}
 			sub, err := convertNode(li, source)
-			if err != nil || sub == nil {
+			if err != nil {
+				return err
+			}
+			if sub == nil {
 				continue
 			}
 			parent.Children = append(parent.Children, *sub)
 		}
 	}
+	return nil
 }
 
 func extractRichText(n gast.Node, source []byte) []RichText {
@@ -339,24 +349,48 @@ func blockToMarkdown(b Block) (string, error) {
 func blockToMarkdownLine(b Block) (string, error) {
 	switch b.Type {
 	case BlockParagraph:
+		if b.Paragraph == nil {
+			return "\n", nil
+		}
 		return richTextToAnnotated(b.Paragraph.RichText) + "\n", nil
 	case BlockHeading1:
+		if b.Heading1 == nil {
+			return "\n", nil
+		}
 		return "# " + richTextToAnnotated(b.Heading1.RichText) + "\n", nil
 	case BlockHeading2:
+		if b.Heading2 == nil {
+			return "\n", nil
+		}
 		return "## " + richTextToAnnotated(b.Heading2.RichText) + "\n", nil
 	case BlockHeading3:
+		if b.Heading3 == nil {
+			return "\n", nil
+		}
 		return "### " + richTextToAnnotated(b.Heading3.RichText) + "\n", nil
 	case BlockBulletedListItem:
+		if b.BulletedItem == nil {
+			return "\n", nil
+		}
 		return "- " + richTextToAnnotated(b.BulletedItem.RichText) + "\n", nil
 	case BlockNumberedListItem:
+		if b.NumberedItem == nil {
+			return "\n", nil
+		}
 		return "1. " + richTextToAnnotated(b.NumberedItem.RichText) + "\n", nil
 	case BlockToDo:
+		if b.ToDo == nil {
+			return "\n", nil
+		}
 		prefix := "- [ ] "
 		if b.ToDo.Checked {
 			prefix = "- [x] "
 		}
 		return prefix + richTextToAnnotated(b.ToDo.RichText) + "\n", nil
 	case BlockCode:
+		if b.Code == nil {
+			return "\n", nil
+		}
 		lang := b.Code.Language
 		if lang == "" {
 			lang = "text"
@@ -364,8 +398,14 @@ func blockToMarkdownLine(b Block) (string, error) {
 		content := richTextToPlain(b.Code.RichText)
 		return "```" + lang + "\n" + content + "\n```\n", nil
 	case BlockQuote:
+		if b.Quote == nil {
+			return "\n", nil
+		}
 		return "> " + richTextToAnnotated(b.Quote.RichText) + "\n", nil
 	case BlockCallout:
+		if b.Callout == nil {
+			return "\n", nil
+		}
 		return "> [!NOTE]\n> " + richTextToAnnotated(b.Callout.RichText) + "\n", nil
 	case BlockDivider:
 		return "---\n", nil

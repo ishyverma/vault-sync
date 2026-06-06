@@ -1,14 +1,20 @@
 package notion
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/ishyverma/vault-sync/internal/connectors"
 	"github.com/ishyverma/vault-sync/internal/core"
 	"github.com/ishyverma/vault-sync/internal/storage"
 )
+
+var ErrNotFound = errors.New("notion: page not found")
+
+var _ connectors.Connector = (*Connector)(nil)
 
 type Connector struct {
 	client      *Client
@@ -58,8 +64,10 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		}
 	}
 
-	fm, body, _ := core.ParseFrontmatter(content)
-	if body == "" {
+	fm, body, fmErr := core.ParseFrontmatter(content)
+	if fmErr != nil {
+		body = content
+	} else if body == "" {
 		body = content
 	}
 
@@ -179,6 +187,9 @@ func (c *Connector) Delete(remoteID string) error {
 }
 
 func buildProperties(note *storage.Note) map[string]Property {
+	if note == nil {
+		return map[string]Property{}
+	}
 	return map[string]Property{
 		"title": {
 			Type:  "title",

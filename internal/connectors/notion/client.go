@@ -34,18 +34,18 @@ func NewClient(token string) *Client {
 func (c *Client) do(method, path string, body, out interface{}) error {
 	c.waitRateLimit()
 
-	var buf bytes.Buffer
-	if body != nil {
-		if err := json.NewEncoder(&buf).Encode(body); err != nil {
-			return fmt.Errorf("encode request: %w", err)
-		}
-	}
-
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(1<<attempt) * time.Second
 			time.Sleep(backoff)
+		}
+
+		var buf bytes.Buffer
+		if body != nil {
+			if err := json.NewEncoder(&buf).Encode(body); err != nil {
+				return fmt.Errorf("encode request: %w", err)
+			}
 		}
 
 		req, err := http.NewRequest(method, apiBase+path, &buf)
@@ -61,9 +61,13 @@ func (c *Client) do(method, path string, body, out interface{}) error {
 			lastErr = fmt.Errorf("request failed: %w", err)
 			continue
 		}
-		defer resp.Body.Close()
 
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read response: %w", readErr)
+			continue
+		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			retryAfter := time.Second
@@ -83,6 +87,9 @@ func (c *Client) do(method, path string, body, out interface{}) error {
 		}
 
 		if resp.StatusCode >= 400 {
+			if resp.StatusCode == http.StatusNotFound {
+				return ErrNotFound
+			}
 			return fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
 		}
 
