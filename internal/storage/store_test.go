@@ -84,7 +84,7 @@ func TestFindNoteByFilename(t *testing.T) {
 
 func TestUpdateNote(t *testing.T) {
 	s := newTestStore(t)
-	err := s.CreateNote(&Note{ID: "u1", Title: "Old"})
+	err := s.CreateNote(&Note{ID: "u1", Filename: "u1.md", Title: "Old"})
 	require.NoError(t, err)
 
 	note, _ := s.GetNote("u1")
@@ -98,7 +98,7 @@ func TestUpdateNote(t *testing.T) {
 
 func TestUpdateNote_UpdatesTags(t *testing.T) {
 	s := newTestStore(t)
-	err := s.CreateNote(&Note{ID: "tags-update", Title: "Tags", Tags: []string{"a", "b"}})
+	err := s.CreateNote(&Note{ID: "tags-update", Filename: "tags.md", Title: "Tags", Tags: []string{"a", "b"}})
 	require.NoError(t, err)
 
 	note, _ := s.GetNote("tags-update")
@@ -118,7 +118,7 @@ func TestUpdateNonexistentNote(t *testing.T) {
 
 func TestDeleteNote(t *testing.T) {
 	s := newTestStore(t)
-	err := s.CreateNote(&Note{ID: "del", Tags: []string{"gone"}})
+	err := s.CreateNote(&Note{ID: "del", Filename: "del.md", Tags: []string{"gone"}})
 	require.NoError(t, err)
 
 	err = s.DeleteNote("del")
@@ -141,9 +141,9 @@ func TestListNotes(t *testing.T) {
 
 func TestListNotesByTag(t *testing.T) {
 	s := newTestStore(t)
-	s.CreateNote(&Note{ID: "1", Tags: []string{"go"}})
-	s.CreateNote(&Note{ID: "2", Tags: []string{"rust"}})
-	s.CreateNote(&Note{ID: "3", Tags: []string{"go", "test"}})
+	s.CreateNote(&Note{ID: "1", Filename: "a.md", Tags: []string{"go"}})
+	s.CreateNote(&Note{ID: "2", Filename: "b.md", Tags: []string{"rust"}})
+	s.CreateNote(&Note{ID: "3", Filename: "c.md", Tags: []string{"go", "test"}})
 
 	notes, err := s.ListNotesByTag("go")
 	require.NoError(t, err)
