@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -197,7 +198,7 @@ func TestDailyCommand(t *testing.T) {
 	err := rootCmd.Execute()
 	require.NoError(t, err)
 
-	date := "2026-06-05"
+	date := time.Now().Format("2006-01-02")
 	notesDir := filepath.Join(os.Getenv("HOME"), ".vault", "notes")
 	dailyPath := filepath.Join(notesDir, date+".md")
 	assert.FileExists(t, dailyPath)
