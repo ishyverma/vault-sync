@@ -92,17 +92,28 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 
 	// Update existing page
 	if remoteID != "" {
-		updated, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Properties: properties})
-		if err != nil {
-			if strings.Contains(err.Error(), "archived") {
-				// Page was archived in Notion. Fall through to create a new one.
-				remoteID = ""
-			} else {
+		// Check page state: if archived or gone, repair it
+		existingPage, getErr := c.client.GetPage(remoteID)
+		if getErr != nil && errors.Is(getErr, ErrNotFound) {
+			// Page was deleted from Notion. Clear remote to create a new one.
+			remoteID = ""
+		} else if getErr != nil {
+			return "", fmt.Errorf("get notion page: %w", getErr)
+		} else if existingPage.Archived {
+			// Unarchive the page first
+			archived := false
+			if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Archived: &archived}); err != nil {
+				return "", fmt.Errorf("unarchive notion page: %w", err)
+			}
+		}
+
+		if remoteID != "" {
+			// Update properties
+			if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Properties: properties}); err != nil {
 				return "", fmt.Errorf("update notion page: %w", err)
 			}
-		} else {
-			_ = updated
-			// Replace blocks: delete all existing, then append new ones
+
+			// Replace blocks
 			if err := c.replaceBlocks(remoteID, blocks); err != nil {
 				return "", fmt.Errorf("replace blocks: %w", err)
 			}
