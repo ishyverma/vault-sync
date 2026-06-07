@@ -103,7 +103,7 @@ release:
   github:
     owner: ishyverma
     name: vault-sync
-  draft: true
+  draft: false
   prerelease: auto
   header: |
     ## VaultSync {{ .Version }} ({{ .Date }})
