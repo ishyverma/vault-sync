@@ -18,8 +18,8 @@ class VaultSync < Formula
   def install
     ENV["CGO_ENABLED"] = "0"
     ldflags = "-s -w -X main.version=#{version}"
-    system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/vault"
-    system "go", "build", *std_go_args(ldflags: ldflags), "-o", bin/"vaultd", "./cmd/vaultd"
+    system "go", "build", *std_go_args(ldflags: ldflags, output: bin/"vault"), "./cmd/vault"
+    system "go", "build", *std_go_args(ldflags: ldflags, output: bin/"vaultd"), "./cmd/vaultd"
   end
 
   test do
