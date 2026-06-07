@@ -1,35 +1,17 @@
-# typed: true
-# frozen_string_literal: true
-
 class VaultSync < Formula
   desc "A fast, local-first note manager with multi-backend sync (Obsidian, Notion, Git)"
   homepage "https://vaultsync.dev"
+  url "https://github.com/ishyverma/vault-sync.git",
+      tag:      "v1.0.0",
+      revision: "b37a0e58c958d101313027237cc77526e64c4c3c"
   license "MIT"
-  version "1.0.0"
 
-  on_macos do
-    if Hardware::CPU.arm?
-      url "https://github.com/ishyverma/vault-sync/releases/latest/download/vault-sync_Darwin_arm64.tar.gz"
-      sha256 "TBD"
-    else
-      url "https://github.com/ishyverma/vault-sync/releases/latest/download/vault-sync_Darwin_x86_64.tar.gz"
-      sha256 "TBD"
-    end
-  end
-
-  on_linux do
-    if Hardware::CPU.arm?
-      url "https://github.com/ishyverma/vault-sync/releases/latest/download/vault-sync_Linux_arm64.tar.gz"
-      sha256 "TBD"
-    else
-      url "https://github.com/ishyverma/vault-sync/releases/latest/download/vault-sync_Linux_x86_64.tar.gz"
-      sha256 "TBD"
-    end
-  end
+  depends_on "go" => :build
 
   def install
-    bin.install "vault"
-    bin.install "vaultd"
+    ENV["CGO_ENABLED"] = "0"
+    system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=#{version}"), "./cmd/vault"
+    system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=#{version}"), "-o", bin/"vaultd", "./cmd/vaultd"
   end
 
   test do
