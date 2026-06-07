@@ -87,6 +87,9 @@ func convertNode(n gast.Node, source []byte) (*Block, error) {
 		}, nil
 
 	case gast.KindParagraph:
+		if n.ChildCount() == 1 && n.FirstChild().Kind() == gast.KindImage {
+			return convertImage(n, source)
+		}
 		rt := extractRichText(n, source)
 		if len(rt) == 0 {
 			return nil, nil
@@ -202,6 +205,29 @@ func convertTable(n gast.Node, source []byte) *Block {
 	return &Block{Type: BlockTable, Table: tbl}
 }
 
+func convertImage(n gast.Node, source []byte) (*Block, error) {
+	img := n.FirstChild().(*gast.Image)
+	url := string(img.Destination)
+	caption := string(img.Title)
+	if caption == "" {
+		caption = string(n.Text(source))
+	}
+
+	var captionRT []RichText
+	if caption != "" {
+		captionRT = []RichText{{Type: "text", Text: &TextContent{Content: caption}}}
+	}
+
+	return &Block{
+		Type: BlockImage,
+		Image: &FileBlock{
+			Type:    "external",
+			External: &FileURL{URL: url},
+			Caption: captionRT,
+		},
+	}, nil
+}
+
 func collectListChildren(n gast.Node, source []byte, parent *Block) error {
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		if child.Kind() != gast.KindList {
@@ -297,6 +323,16 @@ func convertInline(n gast.Node, source []byte) []RichText {
 		}
 		return children
 
+	case gast.KindImage:
+		img := n.(*gast.Image)
+		alt := string(n.Text(source))
+		url := string(img.Destination)
+		rt := []RichText{{Type: "text", Text: &TextContent{Content: alt}}}
+		if url != "" {
+			rt[0].Href = url
+		}
+		return rt
+
 	default:
 		return nil
 	}
@@ -330,6 +366,18 @@ func BlocksToMarkdown(blocks []Block) (string, error) {
 }
 
 func blockToMarkdown(b Block) (string, error) {
+	if b.Type == BlockColumnList || b.Type == BlockColumn || b.Type == BlockSyncedBlock || b.Type == BlockBreadcrumb {
+		var buf bytes.Buffer
+		for _, child := range b.Children {
+			childContent, err := blockToMarkdown(child)
+			if err != nil {
+				return "", err
+			}
+			buf.WriteString(childContent)
+		}
+		return buf.String(), nil
+	}
+
 	line, err := blockToMarkdownLine(b)
 	if err != nil {
 		return "", err
@@ -439,6 +487,78 @@ func blockToMarkdownLine(b Block) (string, error) {
 			return "[child page: " + b.ChildPage.Title + "]\n", nil
 		}
 		return "[child page]\n", nil
+	case BlockImage, BlockVideo:
+		fb := b.Image
+		if b.Type == BlockVideo {
+			fb = b.Video
+		}
+		if fb == nil {
+			return "\n", nil
+		}
+		url := fileBlockURL(fb)
+		caption := richTextToPlain(getFileCaption(fb))
+		if caption == "" {
+			caption = "file"
+		}
+		return "![" + caption + "](" + url + ")\n", nil
+	case BlockFile, BlockPDF:
+		fb := b.File
+		if b.Type == BlockPDF {
+			fb = b.PDF
+		}
+		if fb == nil {
+			return "\n", nil
+		}
+		url := fileBlockURL(fb)
+		name := richTextToPlain(getFileCaption(fb))
+		if name == "" {
+			name = "file"
+		}
+		return "[" + name + "](" + url + ")\n", nil
+	case BlockBookmark, BlockLinkPreview:
+		var url string
+		if b.Bookmark != nil {
+			url = b.Bookmark.URL
+		} else if b.LinkPreview != nil {
+			url = b.LinkPreview.URL
+		}
+		if url == "" {
+			return "\n", nil
+		}
+		return "[" + url + "](" + url + ")\n", nil
+	case BlockEmbed:
+		if b.Embed == nil || b.Embed.URL == "" {
+			return "\n", nil
+		}
+		return "[" + b.Embed.URL + "](" + b.Embed.URL + ")\n", nil
+	case BlockEquation:
+		if b.Equation == nil || b.Equation.Expression == "" {
+			return "\n", nil
+		}
+		return "$$\n" + b.Equation.Expression + "\n$$\n", nil
+	case BlockChildDatabase:
+		if b.ChildDatabase != nil {
+			return "[child database: " + b.ChildDatabase.Title + "]\n", nil
+		}
+		return "[child database]\n", nil
+	case BlockLinkToPage:
+		if b.LinkToPage != nil {
+			id := b.LinkToPage.PageID
+			if id == "" {
+				id = b.LinkToPage.DatabaseID
+			}
+			return "[link to page: " + id + "]\n", nil
+		}
+		return "[link to page]\n", nil
+	case BlockTemplate:
+		if b.Template == nil {
+			return "\n", nil
+		}
+		return richTextToAnnotated(b.Template.RichText) + "\n", nil
+	case BlockTableOfContents:
+		return "[table of contents]\n", nil
+	case BlockColumnList, BlockColumn, BlockSyncedBlock, BlockBreadcrumb:
+		return "", nil
 	default:
 		return "", nil
 	}
@@ -513,6 +633,26 @@ func richTextToAnnotated(rt []RichText) string {
 		}
 	}
 	return b.String()
+}
+
+func fileBlockURL(fb *FileBlock) string {
+	if fb == nil {
+		return ""
+	}
+	if fb.External != nil {
+		return fb.External.URL
+	}
+	if fb.File != nil {
+		return fb.File.URL
+	}
+	return ""
+}
+
+func getFileCaption(fb *FileBlock) []RichText {
+	if fb == nil {
+		return nil
+	}
+	return fb.Caption
 }
 
 func MarkdownToBlocksRaw(markdown string) []Block {

@@ -54,12 +54,86 @@ type Block struct {
 	Divider      *DividerBlock   `json:"divider,omitempty"`
 	Table        *TableBlock     `json:"table,omitempty"`
 	TableRow     *TableRowBlock  `json:"table_row,omitempty"`
+	Image        *FileBlock      `json:"image,omitempty"`
+	Video        *FileBlock      `json:"video,omitempty"`
+	File         *FileBlock      `json:"file,omitempty"`
+	PDF          *FileBlock      `json:"pdf,omitempty"`
+	Bookmark     *BookmarkBlock  `json:"bookmark,omitempty"`
+	Embed        *EmbedBlock     `json:"embed,omitempty"`
+	Equation     *EquationBlock  `json:"equation,omitempty"`
 	ChildPage    *ChildPageBlock `json:"child_page,omitempty"`
+	ChildDatabase *ChildPageBlock `json:"child_database,omitempty"`
+	Breadcrumb   *BreadcrumbBlock `json:"breadcrumb,omitempty"`
+	ColumnList   *ColumnListBlock `json:"column_list,omitempty"`
+	Column       *ColumnBlock     `json:"column,omitempty"`
+	LinkPreview  *LinkPreviewBlock `json:"link_preview,omitempty"`
+	LinkToPage   *LinkToPageBlock `json:"link_to_page,omitempty"`
+	SyncedBlock  *SyncedBlock     `json:"synced_block,omitempty"`
+	Template     *TemplateBlock   `json:"template,omitempty"`
+	TableOfContents *TableOfContentsBlock `json:"table_of_contents,omitempty"`
 	Children     []Block         `json:"children,omitempty"`
 }
 
 type ChildPageBlock struct {
 	Title string `json:"title"`
+}
+
+type FileBlock struct {
+	Type     string       `json:"type"`
+	External *FileURL     `json:"external,omitempty"`
+	File     *FileURL     `json:"file,omitempty"`
+	Caption  []RichText   `json:"caption,omitempty"`
+}
+
+type FileURL struct {
+	URL        string `json:"url"`
+	ExpiryTime string `json:"expiry_time,omitempty"`
+}
+
+type BookmarkBlock struct {
+	URL     string    `json:"url"`
+	Caption []RichText `json:"caption,omitempty"`
+}
+
+type EmbedBlock struct {
+	URL string `json:"url"`
+}
+
+type EquationBlock struct {
+	Expression string `json:"expression"`
+}
+
+type BreadcrumbBlock struct{}
+
+type ColumnListBlock struct{}
+
+type ColumnBlock struct{}
+
+type LinkPreviewBlock struct {
+	URL string `json:"url"`
+}
+
+type LinkToPageBlock struct {
+	Type       string `json:"type"`
+	PageID     string `json:"page_id,omitempty"`
+	DatabaseID string `json:"database_id,omitempty"`
+}
+
+type SyncedBlock struct {
+	SyncedFrom *SyncedFrom `json:"synced_from,omitempty"`
+}
+
+type SyncedFrom struct {
+	Type    string `json:"type"`
+	BlockID string `json:"block_id,omitempty"`
+}
+
+type TemplateBlock struct {
+	RichText []RichText `json:"rich_text"`
+}
+
+type TableOfContentsBlock struct {
+	Color string `json:"color,omitempty"`
 }
 
 type TextBlock struct {
