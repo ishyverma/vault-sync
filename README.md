@@ -5,7 +5,7 @@
   </p>
   <p>
     <a href="https://github.com/ishyverma/vault-sync/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-    <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go" alt="Go"></a>
+    <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go" alt="Go"></a>
     <a href="https://github.com/charmbracelet/bubbletea"><img src="https://img.shields.io/badge/TUI-BubbleTea-ff69b4" alt="TUI"></a>
     <a href="https://sqlite.org"><img src="https://img.shields.io/badge/storage-SQLite-003B57" alt="Storage"></a>
   </p>
@@ -76,8 +76,8 @@
 - **Lipgloss theming** — adaptive dark/light with columnar layouts
 
 ### Storage
-- **SQLite** — WAL journal mode, concurrent readers + writer with 5s busy timeout
-- **FTS4** — full-text search across title and content with unicode61 tokenizer
+- **SQLite** — WAL journal mode, concurrent readers + writer with 5s busy timeout, pure Go driver (no CGO required)
+- **FTS4** — full-text search across title and content with unicode61 tokenizer (LIKE fallback when FTS not available)
 - **Schema** — `notes` (metadata, tags, FTS), `sync_state` (per-backend tracking), `sync_queue` (offline retries), `sync_history` (audit log), `versions` (snapshots)
 
 ---
@@ -510,7 +510,7 @@ date_format = "2006-01-02"
 ### Prerequisites
 
 - Go 1.24+
-- SQLite (included via `mattn/go-sqlite3`)
+- Pure Go SQLite via `modernc.org/sqlite` (no CGO required)
 
 ### Commands
 
