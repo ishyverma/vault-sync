@@ -92,16 +92,22 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 
 	// Update existing page
 	if remoteID != "" {
-		if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Properties: properties}); err != nil {
-			return "", fmt.Errorf("update notion page: %w", err)
+		updated, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Properties: properties})
+		if err != nil {
+			if strings.Contains(err.Error(), "archived") {
+				// Page was archived in Notion. Fall through to create a new one.
+				remoteID = ""
+			} else {
+				return "", fmt.Errorf("update notion page: %w", err)
+			}
+		} else {
+			_ = updated
+			// Replace blocks: delete all existing, then append new ones
+			if err := c.replaceBlocks(remoteID, blocks); err != nil {
+				return "", fmt.Errorf("replace blocks: %w", err)
+			}
+			return remoteID, nil
 		}
-
-		// Replace blocks: delete all existing, then append new ones
-		if err := c.replaceBlocks(remoteID, blocks); err != nil {
-			return "", fmt.Errorf("replace blocks: %w", err)
-		}
-
-		return remoteID, nil
 	}
 
 	// Create new page (without children — append them separately)
