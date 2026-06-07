@@ -107,39 +107,6 @@ nfpms:
       - rpm
       - apk
 
-brews:
-  - name: vault-sync
-  - name: vault-sync
-    ids:
-      - vault
-      - vaultd
-      - vault-macos
-      - vaultd-macos
-    repository:
-      owner: ishyverma
-      name: homebrew-tap
-    commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
-    homepage: https://vaultsync.dev
-    description: A fast, local-first note manager with multi-backend sync (Obsidian, Notion, Git)
-    license: MIT
-    test: |
-      system "#{bin}/vault version"
-    install: |
-      bin.install "vault"
-      bin.install "vaultd"
-
-aurs:
-  - name: vault-sync-bin
-    homepage: https://vaultsync.dev
-    description: A fast, local-first note manager with multi-backend sync (Obsidian, Notion, Git)
-    license: MIT
-    private_key: "{{ .Env.AUR_PRIVATE_KEY }}"
-    package: |-
-      install -Dm755 vault "${pkgdir}/usr/bin/vault"
-      install -Dm755 vaultd "${pkgdir}/usr/bin/vaultd"
-
 source:
   enabled: true
 
