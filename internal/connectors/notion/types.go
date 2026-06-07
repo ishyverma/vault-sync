@@ -304,3 +304,53 @@ type SearchResponse struct {
 	HasMore    bool    `json:"has_more"`
 	NextCursor string  `json:"next_cursor"`
 }
+
+type Database struct {
+	ID         string                      `json:"id"`
+	Title      []RichText                  `json:"title"`
+	Properties map[string]DatabaseProperty `json:"properties"`
+}
+
+type DatabaseProperty struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Type        string                 `json:"type"`
+	MultiSelect *struct{}              `json:"multi_select,omitempty"`
+	Select      *struct{}              `json:"select,omitempty"`
+	Date        *struct{}              `json:"date,omitempty"`
+	RichText    *struct{}              `json:"rich_text,omitempty"`
+	Number      *struct{}              `json:"number,omitempty"`
+	Checkbox    *struct{}              `json:"checkbox,omitempty"`
+	URL         *struct{}              `json:"url,omitempty"`
+	Status      *StatusPropertyConfig  `json:"status,omitempty"`
+}
+
+type StatusPropertyConfig struct {
+	Options []StatusOption `json:"options,omitempty"`
+	Groups  []StatusGroup  `json:"groups,omitempty"`
+}
+
+type StatusOption struct {
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
+type StatusGroup struct {
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
+type QueryDatabaseRequest struct {
+	Filter     map[string]interface{} `json:"filter,omitempty"`
+	Sorts      []Sort                 `json:"sorts,omitempty"`
+	PageSize   int                    `json:"page_size,omitempty"`
+	StartCursor string                `json:"start_cursor,omitempty"`
+}
+
+type QueryDatabaseResponse struct {
+	Results    []Page  `json:"results"`
+	HasMore    bool    `json:"has_more"`
+	NextCursor string  `json:"next_cursor"`
+}

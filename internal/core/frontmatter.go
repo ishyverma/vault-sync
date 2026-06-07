@@ -35,18 +35,18 @@ func ParseFrontmatter(content string) (Frontmatter, string, error) {
 	return fm, strings.TrimSpace(matches[2]), nil
 }
 
-func BuildFrontmatter(fm Frontmatter) string {
-	data := map[string]interface{}{
-		"title": fm.Title,
-	}
-	if fm.Date != "" {
-		data["date"] = fm.Date
-	}
-	if len(fm.Tags) > 0 {
-		data["tags"] = fm.Tags
-	}
+type buildFrontmatterData struct {
+	Title string   `yaml:"title"`
+	Date  string   `yaml:"date,omitempty"`
+	Tags  []string `yaml:"tags,omitempty"`
+}
 
-	b, err := yaml.Marshal(data)
+func BuildFrontmatter(fm Frontmatter) string {
+	b, err := yaml.Marshal(buildFrontmatterData{
+		Title: fm.Title,
+		Date:  fm.Date,
+		Tags:  fm.Tags,
+	})
 	if err != nil {
 		return fmt.Sprintf("---\ntitle: %s\n---\n", fm.Title)
 	}

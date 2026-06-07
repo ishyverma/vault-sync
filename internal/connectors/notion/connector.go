@@ -71,9 +71,8 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		body = content
 	}
 
-	body = embedTags(body, fm.Tags)
+	body = EmbedTags(body, fm.Tags)
 
-	// Use frontmatter title if available, fall back to DB title
 	title := note.Title
 	if fm.Title != "" {
 		title = fm.Title
@@ -84,23 +83,24 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		return "", fmt.Errorf("convert markdown: %w", err)
 	}
 
-	properties := buildProperties(title)
+	if c.databaseID != "" {
+		return c.pushToDatabase(note, fm, title, blocks, remoteID)
+	}
 
 	if c.targetPageID == "" {
-		return "", fmt.Errorf("notion target page not configured: set target_page_id in config")
+		return "", fmt.Errorf("notion target not configured: set target_page_id or database_id in config")
 	}
+
+	properties := buildPageProperties(title)
 
 	// Update existing page
 	if remoteID != "" {
-		// Check page state: if archived or gone, repair it
 		existingPage, getErr := c.client.GetPage(remoteID)
 		if getErr != nil && errors.Is(getErr, ErrNotFound) {
-			// Page was deleted from Notion. Clear remote to create a new one.
 			remoteID = ""
 		} else if getErr != nil {
 			return "", fmt.Errorf("get notion page: %w", getErr)
 		} else if existingPage.Archived {
-			// Unarchive the page first
 			archived := false
 			if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Archived: &archived}); err != nil {
 				return "", fmt.Errorf("unarchive notion page: %w", err)
@@ -108,12 +108,9 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		}
 
 		if remoteID != "" {
-			// Update properties
 			if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Properties: properties}); err != nil {
 				return "", fmt.Errorf("update notion page: %w", err)
 			}
-
-			// Replace blocks
 			if err := c.replaceBlocks(remoteID, blocks); err != nil {
 				return "", fmt.Errorf("replace blocks: %w", err)
 			}
@@ -121,7 +118,6 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		}
 	}
 
-	// Create new page (without children — append them separately)
 	page, err := c.client.CreatePage(&CreatePageRequest{
 		Parent:     Parent{Type: "page_id", PageID: c.targetPageID},
 		Properties: properties,
@@ -139,7 +135,147 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 	return page.ID, nil
 }
 
-func embedTags(body string, tags []string) string {
+func (c *Connector) pushToDatabase(note *storage.Note, fm core.Frontmatter, title string, blocks []Block, remoteID string) (string, error) {
+	db, err := c.client.GetDatabase(c.databaseID)
+	if err != nil {
+		return "", fmt.Errorf("get database schema: %w", err)
+	}
+
+	properties := c.buildDBProperties(db, fm, title)
+
+	// If we have a remoteID, verify page still exists
+	if remoteID != "" {
+		existingPage, getErr := c.client.GetPage(remoteID)
+		if getErr != nil && errors.Is(getErr, ErrNotFound) {
+			remoteID = ""
+		} else if getErr != nil {
+			return "", fmt.Errorf("get database entry: %w", getErr)
+		} else if existingPage.Archived {
+			archived := false
+			if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Archived: &archived}); err != nil {
+				return "", fmt.Errorf("unarchive entry: %w", err)
+			}
+		}
+
+		if remoteID != "" {
+			if _, err := c.client.UpdatePage(remoteID, &UpdatePageRequest{Properties: properties}); err != nil {
+				return "", fmt.Errorf("update entry properties: %w", err)
+			}
+			if err := c.replaceBlocks(remoteID, blocks); err != nil {
+				return "", fmt.Errorf("replace entry blocks: %w", err)
+			}
+			return remoteID, nil
+		}
+	}
+
+	// No remoteID — query the database to find existing entry by title
+	existingID, err := c.findDatabaseEntry(db, title)
+	if err != nil {
+		return "", fmt.Errorf("find database entry: %w", err)
+	}
+	if existingID != "" {
+		if _, err := c.client.UpdatePage(existingID, &UpdatePageRequest{Properties: properties}); err != nil {
+			return "", fmt.Errorf("update existing entry: %w", err)
+		}
+		if err := c.replaceBlocks(existingID, blocks); err != nil {
+			return "", fmt.Errorf("replace existing blocks: %w", err)
+		}
+		return existingID, nil
+	}
+
+	page, err := c.client.CreatePage(&CreatePageRequest{
+		Parent:     Parent{Type: "database_id", DatabaseID: c.databaseID},
+		Properties: properties,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create database entry: %w", err)
+	}
+
+	if len(blocks) > 0 {
+		if err := c.appendBlocksRecursive(page.ID, blocks); err != nil {
+			return "", fmt.Errorf("append blocks: %w", err)
+		}
+	}
+
+	return page.ID, nil
+}
+
+func (c *Connector) findDatabaseEntry(db *Database, title string) (string, error) {
+	titleProp := ""
+	for name, prop := range db.Properties {
+		if prop.Type == "title" {
+			titleProp = name
+			break
+		}
+	}
+	if titleProp == "" {
+		return "", nil
+	}
+
+	resp, err := c.client.QueryDatabase(c.databaseID, &QueryDatabaseRequest{
+		Filter: map[string]interface{}{
+			"property": titleProp,
+			"title": map[string]interface{}{
+				"equals": title,
+			},
+		},
+		PageSize: 5,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if len(resp.Results) > 0 {
+		return resp.Results[0].ID, nil
+	}
+	return "", nil
+}
+
+func (c *Connector) buildDBProperties(db *Database, fm core.Frontmatter, title string) map[string]Property {
+	props := make(map[string]Property, len(db.Properties))
+
+	for name, propDef := range db.Properties {
+		switch propDef.Type {
+		case "title":
+			if title != "" {
+				props[name] = Property{
+					Type:  "title",
+					Title: []RichText{{Type: "text", Text: &TextContent{Content: title}}},
+				}
+			}
+		case "multi_select":
+			lower := strings.ToLower(name)
+			if (lower == "tags" || lower == "tag") && len(fm.Tags) > 0 {
+				ms := make([]Select, len(fm.Tags))
+				for i, tag := range fm.Tags {
+					ms[i] = Select{Name: tag}
+				}
+				props[name] = Property{
+					Type:        "multi_select",
+					MultiSelect: ms,
+				}
+			}
+		case "date":
+			if strings.ToLower(name) == "date" && fm.Date != "" {
+				props[name] = Property{
+					Type: "date",
+					Date: &DateValue{Start: fm.Date},
+				}
+			}
+		case "rich_text":
+			if strings.ToLower(name) == "description" && title != "" {
+				props[name] = Property{
+					Type:     "rich_text",
+					RichText: []RichText{{Type: "text", Text: &TextContent{Content: title}}},
+				}
+			}
+		}
+	}
+
+	return props
+}
+
+func EmbedTags(body string, tags []string) string {
 	if len(tags) == 0 {
 		return body
 	}
@@ -242,7 +378,7 @@ func (c *Connector) Delete(remoteID string) error {
 	return c.client.DeletePage(remoteID)
 }
 
-func buildProperties(title string) map[string]Property {
+func buildPageProperties(title string) map[string]Property {
 	if title == "" {
 		return map[string]Property{}
 	}
@@ -276,6 +412,18 @@ func propertiesToFrontmatter(props map[string]Property) core.Frontmatter {
 		case "date":
 			if p.Date != nil {
 				fm.Date = p.Date.Start
+			}
+		case "rich_text":
+			if fm.Title == "" {
+				fm.Title = richTextToPlain(p.RichText)
+			}
+		case "select":
+			if p.Select != nil {
+				fm.Tags = append(fm.Tags, p.Select.Name)
+			}
+		case "status":
+			if p.Status != nil {
+				fm.Tags = append(fm.Tags, p.Status.Name)
 			}
 		}
 	}

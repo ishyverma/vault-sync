@@ -229,6 +229,24 @@ func (c *Client) DeleteBlock(blockID string) error {
 	return c.do("PATCH", "/blocks/"+blockID, req, nil)
 }
 
+func (c *Client) GetDatabase(databaseID string) (*Database, error) {
+	var db Database
+	err := c.do("GET", "/databases/"+databaseID, nil, &db)
+	if err != nil {
+		return nil, err
+	}
+	return &db, nil
+}
+
+func (c *Client) QueryDatabase(databaseID string, req *QueryDatabaseRequest) (*QueryDatabaseResponse, error) {
+	var resp QueryDatabaseResponse
+	err := c.do("POST", "/databases/"+databaseID+"/query", req, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) Status() error {
 	_, err := c.Search("")
 	return err

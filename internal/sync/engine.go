@@ -89,15 +89,22 @@ func (e *Engine) PushNote(noteID string) error {
 		return fmt.Errorf("read note file: %w", err)
 	}
 
-	currentHash := computeHash(content)
+	rawHash := computeHash(content)
 
-	// Sync note metadata from frontmatter
+	// Parse frontmatter
 	fm, body, fmErr := core.ParseFrontmatter(content)
+	if fmErr != nil {
+		body = content
+	} else if body == "" {
+		body = content
+	}
+
+	// Update note metadata from frontmatter
 	if fmErr == nil && fm.Title != "" && fm.Title != note.Title {
 		note.Title = fm.Title
 		note.Tags = fm.Tags
 		note.Content = content
-		note.ContentHash = currentHash
+		note.ContentHash = rawHash
 		note.WordCount = core.WordCount(body)
 		if err := e.store.UpdateNote(note); err != nil {
 			return fmt.Errorf("update note metadata: %w", err)
@@ -107,8 +114,11 @@ func (e *Engine) PushNote(noteID string) error {
 	var backendErrs []string
 
 	for name, conn := range e.getConnectors() {
+		canonicalHash := e.canonicalHash(name, fm, body, rawHash)
+
 		state, stateErr := e.store.GetSyncState(noteID, name)
-		if stateErr == nil && state.LastHash == currentHash && state.Status == "synced" {
+
+		if stateErr == nil && state.LastHash == canonicalHash && state.Status == "synced" {
 			continue
 		}
 
@@ -168,7 +178,7 @@ func (e *Engine) PushNote(noteID string) error {
 			Direction: "push",
 			Status:    "success",
 			SyncedAt:  time.Now().UTC(),
-			Hash:      currentHash,
+			Hash:      rawHash,
 		})
 
 		e.store.UpsertSyncState(&storage.SyncState{
@@ -176,7 +186,7 @@ func (e *Engine) PushNote(noteID string) error {
 			Backend:    name,
 			RemoteID:   remoteID,
 			LastSyncAt: time.Now().UTC(),
-			LastHash:   currentHash,
+			LastHash:   canonicalHash,
 			Status:     "synced",
 		})
 	}
@@ -186,6 +196,14 @@ func (e *Engine) PushNote(noteID string) error {
 	}
 
 	return nil
+}
+
+func (e *Engine) canonicalHash(backend string, fm core.Frontmatter, body string, rawHash string) string {
+	if backend == "notion" {
+		processedBody := notion.EmbedTags(body, fm.Tags)
+		return computeHash(core.BuildNoteContent(fm, processedBody))
+	}
+	return rawHash
 }
 
 func (e *Engine) PushAll() error {
@@ -232,8 +250,9 @@ func (e *Engine) PullNote(noteID string) error {
 
 		localContent, localErr := e.readNoteFile(note.Filename)
 		if localErr == nil {
-			localHash := computeHash(localContent)
-			if localHash != state.LastHash {
+			localFm, localBody, _ := core.ParseFrontmatter(localContent)
+			localCanonical := e.canonicalHash(name, localFm, localBody, computeHash(localContent))
+			if localCanonical != state.LastHash {
 				e.recordPullFailure(noteID, name, fmt.Errorf("local changes conflict with remote changes"))
 				continue
 			}
