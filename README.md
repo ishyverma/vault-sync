@@ -84,10 +84,31 @@
 
 ## Quick Start
 
-```bash
-# Install
-go install github.com/ishyverma/vault-sync/cmd/vault@latest
+### macOS — Homebrew
 
+```bash
+brew install ishyverma/tap/vault-sync
+```
+
+### Linux — APT / RPM / APK
+
+Download the `.deb`, `.rpm`, or `.apk` from the [latest release](https://github.com/ishyverma/vault-sync/releases/latest).
+
+### Any platform — one-liner
+
+```bash
+curl -fsSL https://vaultsync.dev/install | sh
+```
+
+### Go install
+
+```bash
+go install github.com/ishyverma/vault-sync/cmd/vault@latest
+```
+
+---
+
+```bash
 # Initialize your vault
 vault init
 
@@ -527,8 +548,8 @@ go test -race -count=1 ./...
 | **Phase 2** | ✅ Complete | TUI Dashboard, note browser, search, settings |
 | **Phase 3** | ✅ Complete | Notion sync (OAuth, markdown↔blocks, database mode) |
 | **Phase 4** | ✅ Complete | Conflict resolution, offline queue, exponential backoff, sync monitor, statusline |
-| **Phase 5** | ⏳ Planned | Version history, import/export, backlinks, graph view, shell hooks |
-| **Phase 6** | ⏳ Planned | Distribution, Homebrew, install script, docs site |
+| **Phase 5** | ✅ Complete | Version history, import/export, backlinks, graph view, shell hooks |
+| **Phase 6** | ✅ Complete | Distribution: GoReleaser, Homebrew, AUR, APT/RPM/APK packages, install script, Neovim plugin |
 
 ---
 
