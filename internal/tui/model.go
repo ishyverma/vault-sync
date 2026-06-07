@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/pmezard/go-difflib/difflib"
 
 	"github.com/ishyverma/vault-sync/internal/config"
 	"github.com/ishyverma/vault-sync/internal/core"
@@ -59,11 +62,20 @@ type model struct {
 
 	syncHistory []*storage.SyncHistoryEntry
 	syncStates  []*storage.SyncState
+	syncQueueLen int
 
 	conflicts []*storage.SyncState
 	conflictDetail string
 	conflictCursor int
-	conflictMsg string
+	conflictMsg    string
+	conflictDiff   string
+
+	notification string
+	notifUntil   time.Time
+
+	showDiff    bool
+	diffContent string
+	diffView    viewport.Model
 }
 
 func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config, mgr *core.Manager) model {
@@ -104,6 +116,9 @@ func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config,
 	vp := viewport.New(70, 10)
 	vp.Style = lipgloss.NewStyle().PaddingLeft(2)
 
+	dv := viewport.New(70, 20)
+	dv.Style = lipgloss.NewStyle().PaddingLeft(2)
+
 	return model{
 		state:        dashboardView,
 		store:        store,
@@ -116,6 +131,7 @@ func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config,
 		browserFilter:  bf,
 		browserTable:   t,
 		notePreview:    vp,
+		diffView:       dv,
 	}
 }
 
@@ -153,6 +169,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.notePreview.Width = msg.Width - 10
 		m.notePreview.Height = msg.Height / 3
+		m.diffView.Width = msg.Width - 10
+		m.diffView.Height = msg.Height - 10
 		return m, nil
 
 	case notesLoadedMsg:
@@ -162,6 +180,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncDataMsg:
 		m.syncStates = msg.states
+		m.syncQueueLen = msg.queueLen
+		m.syncHistory = msg.history
 		return m, nil
 
 	case searchResultsMsg:
@@ -176,8 +196,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case syncCompleteMsg:
 		if msg.err != nil {
 			m.err = fmt.Errorf("sync failed: %w", msg.err)
+			m.notification = "Sync failed"
+		} else {
+			m.notification = "Sync complete"
 		}
+		m.notifUntil = time.Now().Add(3 * time.Second)
 		return m, tea.Batch(m.loadNotes(), m.loadSyncData())
+
+	case conflictDiffMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.diffContent = msg.diff
+		m.showDiff = true
+		m.diffView.SetContent(m.diffContent)
+		m.diffView.GotoTop()
+		return m, nil
 
 	case conflictResolvedMsg:
 		if msg.err != nil {
@@ -252,6 +287,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	header := m.renderHeader()
 
+	var notification string
+	if m.notification != "" && m.notifUntil.After(time.Now()) {
+		notification = "\n" + InfoStyle.Render("  "+m.notification) + "\n"
+	} else {
+		m.notification = ""
+	}
+
 	var content string
 	if m.err != nil {
 		content = lipgloss.JoinVertical(lipgloss.Top,
@@ -281,6 +323,7 @@ func (m model) View() string {
 	main := lipgloss.JoinVertical(
 		lipgloss.Top,
 		header,
+		notification,
 		content,
 		tabs,
 		help,
@@ -348,7 +391,9 @@ func (m *model) loadSyncData() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return syncDataMsg{states: states}
+		ql, _ := m.store.QueueLength()
+		history, _ := m.store.ListRecentSyncHistory(10)
+		return syncDataMsg{states: states, queueLen: ql, history: history}
 	}
 }
 
@@ -375,7 +420,9 @@ func (m *model) loadSearchResults(query string) tea.Cmd {
 type errMsg struct{ err error }
 type notesLoadedMsg struct{ notes []*storage.Note }
 type syncDataMsg struct {
-	states  []*storage.SyncState
+	states   []*storage.SyncState
+	queueLen int
+	history  []*storage.SyncHistoryEntry
 }
 type searchResultsMsg struct{ results []*storage.Note }
 type conflictsLoadedMsg struct{ states []*storage.SyncState }
@@ -386,10 +433,57 @@ type conflictResolvedMsg struct {
 	err     error
 }
 
+type conflictDiffMsg struct {
+	diff   string
+	err    error
+}
+
 func syncAllCmd(engine *sync.Engine) tea.Cmd {
 	return func() tea.Msg {
 		err := engine.SyncAll()
 		return syncCompleteMsg{err: err}
+	}
+}
+
+func (m *model) loadConflictDiff() tea.Cmd {
+	return func() tea.Msg {
+		c := m.conflicts[m.conflictCursor]
+		note, err := m.store.GetNote(c.NoteID)
+		if err != nil {
+			return conflictDiffMsg{err: fmt.Errorf("get note: %w", err)}
+		}
+		localPath := filepath.Join(m.manager.NotesDir(), note.Filename)
+		localBytes, err := os.ReadFile(localPath)
+		if err != nil {
+			return conflictDiffMsg{err: fmt.Errorf("read local: %w", err)}
+		}
+		conns := m.engine.Connectors()
+		conn, ok := conns[c.Backend]
+		if !ok {
+			return conflictDiffMsg{err: fmt.Errorf("backend %s not found", c.Backend)}
+		}
+		if err := conn.Connect(); err != nil {
+			return conflictDiffMsg{err: fmt.Errorf("connect %s: %w", c.Backend, err)}
+		}
+		remoteContent, err := conn.Pull(c.RemoteID)
+		if err != nil {
+			return conflictDiffMsg{err: fmt.Errorf("pull remote: %w", err)}
+		}
+
+		diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+			A:       difflib.SplitLines(string(localBytes)),
+			B:       difflib.SplitLines(remoteContent),
+			FromFile: "Local",
+			ToFile:   c.Backend,
+			Context:  3,
+		})
+		if err != nil {
+			return conflictDiffMsg{err: fmt.Errorf("diff: %w", err)}
+		}
+		if diff == "" {
+			diff = "(identical)"
+		}
+		return conflictDiffMsg{diff: diff}
 	}
 }
 

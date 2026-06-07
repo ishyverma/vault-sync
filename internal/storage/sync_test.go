@@ -80,7 +80,7 @@ func TestSyncState_List(t *testing.T) {
 
 func TestSyncQueue_EnqueueDequeue(t *testing.T) {
 	s := newTestStore(t)
-	err := s.EnqueueSyncJob("n1", []string{"obsidian"}, "push")
+	err := s.EnqueueSyncJob("n1", []string{"obsidian"}, "push", 0)
 	require.NoError(t, err)
 
 	length, err := s.QueueLength()
@@ -106,9 +106,9 @@ func TestSyncQueue_Empty(t *testing.T) {
 
 func TestSyncQueue_Multiple(t *testing.T) {
 	s := newTestStore(t)
-	s.EnqueueSyncJob("n1", []string{"obsidian"}, "push")
-	s.EnqueueSyncJob("n2", []string{"obsidian", "notion"}, "push")
-	s.EnqueueSyncJob("n3", []string{"notion"}, "pull")
+	s.EnqueueSyncJob("n1", []string{"obsidian"}, "push", 0)
+	s.EnqueueSyncJob("n2", []string{"obsidian", "notion"}, "push", 0)
+	s.EnqueueSyncJob("n3", []string{"notion"}, "pull", 0)
 
 	length, err := s.QueueLength()
 	require.NoError(t, err)

@@ -26,7 +26,7 @@ type Store interface {
 	DeleteSyncState(noteID, backend string) error
 	ListSyncStates() ([]*SyncState, error)
 	ListSyncStatesByStatus(status string) ([]*SyncState, error)
-	EnqueueSyncJob(noteID string, backends []string, direction string) error
+	EnqueueSyncJob(noteID string, backends []string, direction string, attempts int) error
 	DequeueSyncJob() (*SyncQueueItem, error)
 	QueueLength() (int, error)
 	AddSyncHistory(entry *SyncHistoryEntry) error

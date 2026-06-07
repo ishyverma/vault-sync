@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,10 +46,11 @@ func (s Status) String() string {
 }
 
 type Engine struct {
-	mu         sync.RWMutex
-	store      *storage.NoteStore
-	connectors map[string]connectors.Connector
-	notesDir   string
+	mu          sync.RWMutex
+	store       *storage.NoteStore
+	connectors  map[string]connectors.Connector
+	notesDir    string
+	retryLimit  int
 }
 
 func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
@@ -56,7 +58,12 @@ func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
 		store:      store,
 		connectors: make(map[string]connectors.Connector),
 		notesDir:   notesDir,
+		retryLimit: 5,
 	}
+}
+
+func (e *Engine) SetRetryLimit(limit int) {
+	e.retryLimit = limit
 }
 
 func (e *Engine) RegisterConnector(name string, c connectors.Connector) {
@@ -66,6 +73,16 @@ func (e *Engine) RegisterConnector(name string, c connectors.Connector) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.connectors[name] = c
+}
+
+func (e *Engine) Connectors() map[string]connectors.Connector {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	cp := make(map[string]connectors.Connector, len(e.connectors))
+	for k, v := range e.connectors {
+		cp[k] = v
+	}
+	return cp
 }
 
 func (e *Engine) getConnectors() map[string]connectors.Connector {
@@ -167,7 +184,11 @@ func (e *Engine) PushNote(noteID string) error {
 
 		remoteID, pushErr := conn.Push(note, content, existingID)
 		if pushErr != nil {
-			e.recordFailure(noteID, name, pushErr)
+			if isConnectivityError(pushErr) {
+				e.store.EnqueueSyncJob(noteID, []string{name}, "push", 0)
+			} else {
+				e.recordFailure(noteID, name, pushErr)
+			}
 			backendErrs = append(backendErrs, fmt.Sprintf("[%s] %v", name, pushErr))
 			continue
 		}
@@ -204,6 +225,40 @@ func (e *Engine) canonicalHash(backend string, fm core.Frontmatter, body string,
 		return computeHash(core.BuildNoteContent(fm, processedBody))
 	}
 	return rawHash
+}
+
+func (e *Engine) ProcessQueue() (int, error) {
+	var processed int
+	for {
+		item, err := e.store.DequeueSyncJob()
+		if err != nil {
+			if errors.Is(err, storage.ErrSyncJobNotFound) {
+				break
+			}
+			return processed, err
+		}
+
+		if item.Attempts >= e.retryLimit {
+			e.recordFailure(item.NoteID, strings.Join(item.Backends, ","), fmt.Errorf("retry limit exceeded (%d)", e.retryLimit))
+			processed++
+			continue
+		}
+
+		var processErr error
+		if item.Direction == "push" {
+			processErr = e.PushNote(item.NoteID)
+		} else {
+			processErr = e.PullNote(item.NoteID)
+		}
+
+		if processErr != nil {
+			if isConnectivityError(processErr) {
+				e.store.EnqueueSyncJob(item.NoteID, item.Backends, item.Direction, item.Attempts+1)
+			}
+		}
+		processed++
+	}
+	return processed, nil
 }
 
 func (e *Engine) PushAll() error {
@@ -322,6 +377,10 @@ func (e *Engine) PullAll() error {
 }
 
 func (e *Engine) SyncAll() error {
+	if _, err := e.ProcessQueue(); err != nil {
+		return fmt.Errorf("process queue: %w", err)
+	}
+
 	notes, err := e.store.ListNotes()
 	if err != nil {
 		return fmt.Errorf("list notes: %w", err)
@@ -333,6 +392,12 @@ func (e *Engine) SyncAll() error {
 			if firstErr == nil {
 				firstErr = err
 			}
+		}
+	}
+
+	if _, err := e.ProcessQueue(); err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("process queue: %w", err)
 		}
 	}
 	return firstErr
@@ -556,6 +621,10 @@ func (e *Engine) recordPullFailure(noteID, backend string, err error) {
 	e.store.UpsertSyncState(existing)
 }
 
+func (e *Engine) ListConflicts() ([]*storage.SyncState, error) {
+	return e.store.ListSyncStatesByStatus("conflict")
+}
+
 func (e *Engine) QueueLength() (int, error) {
 	return e.store.QueueLength()
 }
@@ -599,6 +668,24 @@ func atomicWriteLocal(path, content string) error {
 	}
 
 	return os.Rename(tmpName, path)
+}
+
+func isConnectivityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "network is unreachable") ||
+		strings.Contains(msg, "no route to host") ||
+		strings.Contains(msg, "tls handshake timeout")
 }
 
 func computeHash(content string) string {

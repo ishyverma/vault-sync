@@ -107,11 +107,26 @@ func (s *NoteStore) ListSyncStatesByStatus(status string) ([]*SyncState, error) 
 	return scanSyncStates(rows)
 }
 
-func (s *NoteStore) EnqueueSyncJob(noteID string, backends []string, direction string) error {
+func backoffDelay(attempt int) time.Duration {
+	if attempt <= 0 {
+		return 0
+	}
+	d := time.Duration(1<<min(attempt-1, 5)) * time.Second
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
+}
+
+func (s *NoteStore) EnqueueSyncJob(noteID string, backends []string, direction string, attempts int) error {
 	data, _ := json.Marshal(backends)
+	queuedAt := time.Now().UTC()
+	if attempts > 0 {
+		queuedAt = queuedAt.Add(backoffDelay(attempts))
+	}
 	_, err := s.db.Exec(`
 		INSERT INTO sync_queue (note_id, backends, direction, queued_at, attempts)
-		VALUES (?, ?, ?, ?, 0)`, noteID, string(data), direction, time.Now().UTC().Format(time.RFC3339))
+		VALUES (?, ?, ?, ?, ?)`, noteID, string(data), direction, queuedAt.Format(time.RFC3339), attempts)
 	return err
 }
 
@@ -124,9 +139,10 @@ func (s *NoteStore) DequeueSyncJob() (*SyncQueueItem, error) {
 
 	item := &SyncQueueItem{}
 	var backendsJSON, queuedAt string
+	now := time.Now().UTC().Format(time.RFC3339)
 	err = tx.QueryRow(`
 		SELECT id, note_id, backends, direction, queued_at, attempts, COALESCE(last_error,'')
-		FROM sync_queue ORDER BY id ASC LIMIT 1`).Scan(
+		FROM sync_queue WHERE queued_at <= ? ORDER BY id ASC LIMIT 1`, now).Scan(
 		&item.ID, &item.NoteID, &backendsJSON, &item.Direction, &queuedAt, &item.Attempts, &item.LastError)
 	if err == sql.ErrNoRows {
 		return nil, ErrSyncJobNotFound
@@ -159,6 +175,28 @@ func (s *NoteStore) AddSyncHistory(entry *SyncHistoryEntry) error {
 		entry.NoteID, entry.Backend, entry.Direction, entry.Status,
 		entry.SyncedAt.Format(time.RFC3339), entry.Hash)
 	return err
+}
+
+func (s *NoteStore) ListRecentSyncHistory(limit int) ([]*SyncHistoryEntry, error) {
+	rows, err := s.db.Query(`
+		SELECT id, note_id, backend, direction, status, synced_at, COALESCE(hash,'')
+		FROM sync_history ORDER BY synced_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []*SyncHistoryEntry
+	for rows.Next() {
+		e := &SyncHistoryEntry{}
+		var syncAt string
+		if err := rows.Scan(&e.ID, &e.NoteID, &e.Backend, &e.Direction, &e.Status, &syncAt, &e.Hash); err != nil {
+			return nil, err
+		}
+		e.SyncedAt, _ = time.Parse(time.RFC3339, syncAt)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }
 
 func (s *NoteStore) ListSyncHistory(noteID string) ([]*SyncHistoryEntry, error) {

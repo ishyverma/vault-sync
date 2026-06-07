@@ -66,6 +66,7 @@ Press Ctrl+C to stop.`,
 		}
 
 		engine := sync.NewEngine(store, notesDir)
+		engine.SetRetryLimit(cfg.Sync.QueueRetryLimit)
 
 		if cfg.Backends.Obsidian.Enabled && cfg.Backends.Obsidian.VaultPath != "" {
 			obs := obsidian.NewConnector(

@@ -55,15 +55,27 @@ var syncCmd = &cobra.Command{
 	Long: `Pushes all local notes to every connected backend (Obsidian, Notion, etc.).
 
 Notes that are already synced (matching content hash) are skipped automatically.
-Use --force to re-push everything. Use --pull to also pull remote changes.`,
+Use --force to re-push everything. Use --pull to also pull remote changes.
+Use --flush-queue to process queued sync jobs (offline retries).`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 		doPull, _ := cmd.Flags().GetBool("pull")
+		flushQueue, _ := cmd.Flags().GetBool("flush-queue")
 
 		engine, err := newSyncEngine()
 		if err != nil {
 			return fmt.Errorf("sync engine: %w", err)
+		}
+
+		if flushQueue {
+			n, err := engine.ProcessQueue()
+			if err != nil {
+				return fmt.Errorf("flush queue: %w", err)
+			}
+			if n > 0 {
+				fmt.Printf("✓ Processed %d queued job(s)\n", n)
+			}
 		}
 
 		if force {
@@ -129,4 +141,5 @@ func init() {
 	rootCmd.AddCommand(pullCmd)
 	syncCmd.Flags().BoolP("force", "f", false, "Re-push all notes regardless of sync state")
 	syncCmd.Flags().Bool("pull", false, "Also pull remote changes after push")
+	syncCmd.Flags().Bool("flush-queue", false, "Process queued sync jobs (offline retries)")
 }

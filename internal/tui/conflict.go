@@ -9,6 +9,27 @@ import (
 )
 
 func (m model) updateConflict(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.showDiff {
+		switch msg.String() {
+		case "esc", "q", "enter":
+			m.showDiff = false
+			return m, nil
+		case "up", "k":
+			m.diffView.LineUp(1)
+			return m, nil
+		case "down", "j":
+			m.diffView.LineDown(1)
+			return m, nil
+		case "pgup":
+			m.diffView.ViewUp()
+			return m, nil
+		case "pgdown":
+			m.diffView.ViewDown()
+			return m, nil
+		}
+		return m, nil
+	}
+
 	if len(m.conflicts) == 0 {
 		return m, nil
 	}
@@ -16,6 +37,8 @@ func (m model) updateConflict(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "r":
 		return m, m.loadConflicts()
+	case "d":
+		return m, m.loadConflictDiff()
 	case "up", "k":
 		if m.conflictCursor > 0 {
 			m.conflictCursor--
@@ -26,6 +49,8 @@ func (m model) updateConflict(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.conflictCursor++
 		}
 		return m, nil
+	case "enter":
+		return m, m.loadConflictDiff()
 	case "l":
 		c := m.conflicts[m.conflictCursor]
 		return m, resolveConflictCmd(m.engine, c.NoteID, c.Backend, "local")
@@ -55,6 +80,16 @@ func (m model) updateConflict(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) conflictView() string {
 	var b strings.Builder
+
+	if m.showDiff {
+		b.WriteString(TitleStyle.Render("Conflict Diff"))
+		b.WriteString("\n\n")
+		m.diffView.SetContent(m.diffContent)
+		b.WriteString(m.diffView.View())
+		b.WriteString("\n\n")
+		b.WriteString(StatusStyle.Render("[esc] Back to conflict list  [j/k] Scroll"))
+		return b.String()
+	}
 
 	b.WriteString(TitleStyle.Render("Conflict Resolver"))
 	b.WriteString("\n")
@@ -104,7 +139,7 @@ func (m model) conflictView() string {
 	if len(m.conflicts) > 0 {
 		b.WriteString(DividerStyle.Render(strings.Repeat("─", 40)))
 		b.WriteString("\n")
-		b.WriteString(StatusStyle.Render("[l] Keep local  [R] Keep remote  [o] Open & edit  [r] Refresh"))
+		b.WriteString(StatusStyle.Render("[l] Keep local  [R] Keep remote  [d/enter] View diff  [o] Open & edit  [r] Refresh"))
 		b.WriteString("\n")
 	}
 

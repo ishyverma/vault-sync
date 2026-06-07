@@ -119,6 +119,10 @@ func (m *Manager) OpenNote(name string) (*storage.Note, string, error) {
 	return note, notePath, nil
 }
 
+func (m *Manager) GetNote(noteID string) (*storage.Note, error) {
+	return m.store.GetNote(noteID)
+}
+
 func (m *Manager) ListNotes() ([]*storage.Note, error) {
 	return m.store.ListNotes()
 }
