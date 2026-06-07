@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type Store interface {
@@ -37,6 +37,7 @@ type Store interface {
 }
 
 type NoteStore struct {
+	hasFTS  bool
 	db       *sql.DB
 	dbPath   string
 	vaultDir string
@@ -54,7 +55,7 @@ func (s *NoteStore) Init() error {
 		return err
 	}
 
-	db, err := sql.Open("sqlite3", s.dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", s.dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return err
 	}
@@ -83,11 +84,6 @@ func (s *NoteStore) migrate() error {
 		note_id  TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
 		tag      TEXT NOT NULL,
 		PRIMARY KEY (note_id, tag)
-	);
-
-	CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts4(
-		title,
-		content
 	);
 
 	CREATE TABLE IF NOT EXISTS sync_state (
@@ -131,8 +127,17 @@ func (s *NoteStore) migrate() error {
 	);
 	`
 
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+
+	_, ftsErr := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts4(title, content)`)
+	if ftsErr != nil {
+		s.hasFTS = false
+	} else {
+		s.hasFTS = true
+	}
+	return nil
 }
 
 func (s *NoteStore) CreateNote(note *Note) error {
@@ -432,6 +437,9 @@ func intToBool(i int) bool {
 }
 
 func (s *NoteStore) insertNoteFTS(tx *sql.Tx, note *Note) error {
+	if !s.hasFTS {
+		return nil
+	}
 	var rowid int64
 	err := tx.QueryRow(`SELECT rowid FROM notes WHERE id = ?`, note.ID).Scan(&rowid)
 	if err != nil {
@@ -447,6 +455,9 @@ func (s *NoteStore) insertNoteFTS(tx *sql.Tx, note *Note) error {
 }
 
 func (s *NoteStore) deleteNoteFTS(tx *sql.Tx, id string) error {
+	if !s.hasFTS {
+		return nil
+	}
 	var rowid int64
 	err := tx.QueryRow(`SELECT rowid FROM notes WHERE id = ?`, id).Scan(&rowid)
 	if err == sql.ErrNoRows {
