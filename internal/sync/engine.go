@@ -218,7 +218,7 @@ func (e *Engine) PullNote(noteID string) error {
 
 		remoteContent, pullErr := conn.Pull(state.RemoteID)
 		if pullErr != nil {
-			if errors.Is(pullErr, notion.ErrNotFound) {
+			if errors.Is(pullErr, notion.ErrNotFound) || os.IsNotExist(pullErr) {
 				continue
 			}
 			e.recordPullFailure(noteID, name, pullErr)
