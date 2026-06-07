@@ -33,12 +33,59 @@ func (m model) settingsView() string {
 	}
 	b.WriteString("\n")
 
+	b.WriteString("Notion\n")
+	b.WriteString(strings.Repeat("─", 40))
+	b.WriteString("\n")
+	if m.config.Backends.Notion.Enabled {
+		b.WriteString(fmt.Sprintf("  Target page: %s\n", m.config.Backends.Notion.TargetPageID))
+		b.WriteString(fmt.Sprintf("  Database ID: %s\n", m.config.Backends.Notion.DatabaseID))
+	} else {
+		b.WriteString("  Not configured\n")
+	}
+	b.WriteString("\n")
+
+	b.WriteString("Git\n")
+	b.WriteString(strings.Repeat("─", 40))
+	b.WriteString("\n")
+	if m.config.Backends.Git.Enabled {
+		b.WriteString(fmt.Sprintf("  Repo path: %s\n", m.config.Backends.Git.RepoPath))
+		b.WriteString(fmt.Sprintf("  Auto-commit: %v\n", m.config.Backends.Git.AutoCommit))
+		b.WriteString(fmt.Sprintf("  Remote: %s\n", m.config.Backends.Git.Remote))
+	} else {
+		b.WriteString("  Not configured\n")
+	}
+	b.WriteString("\n")
+
 	b.WriteString("Sync\n")
 	b.WriteString(strings.Repeat("─", 40))
 	b.WriteString("\n")
 	b.WriteString(fmt.Sprintf("  Auto-sync:  %v\n", m.config.Sync.AutoSync))
 	b.WriteString(fmt.Sprintf("  Interval:   %ds\n", m.config.Sync.SyncInterval))
 	b.WriteString(fmt.Sprintf("  Strategy:   %s\n", m.config.Sync.ConflictStrategy))
+	b.WriteString(fmt.Sprintf("  Retry limit: %d\n", m.config.Sync.QueueRetryLimit))
+	b.WriteString("\n")
+
+	b.WriteString("Hooks\n")
+	b.WriteString(strings.Repeat("─", 40))
+	b.WriteString("\n")
+	if m.config.Hooks.PreSync != "" {
+		b.WriteString(fmt.Sprintf("  Pre-sync:  %s\n", m.config.Hooks.PreSync))
+	}
+	if m.config.Hooks.PostSync != "" {
+		b.WriteString(fmt.Sprintf("  Post-sync: %s\n", m.config.Hooks.PostSync))
+	}
+	if m.config.Hooks.OnConflict != "" {
+		b.WriteString(fmt.Sprintf("  On conflict: %s\n", m.config.Hooks.OnConflict))
+	}
+	if m.config.Hooks.PreSync == "" && m.config.Hooks.PostSync == "" && m.config.Hooks.OnConflict == "" {
+		b.WriteString("  (none configured)\n")
+	}
+	b.WriteString("\n")
+
+	b.WriteString(DividerStyle.Render(strings.Repeat("─", 40)))
+	b.WriteString("\n")
+	b.WriteString(InfoStyle.Render("Edit config: e"))
+	b.WriteString("\n")
 
 	return b.String()
 }

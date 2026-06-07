@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ishyverma/vault-sync/internal/config"
+	gitconnector "github.com/ishyverma/vault-sync/internal/connectors/git"
 	"github.com/ishyverma/vault-sync/internal/connectors/notion"
 	"github.com/ishyverma/vault-sync/internal/connectors/obsidian"
 	"github.com/ishyverma/vault-sync/internal/core"
@@ -47,6 +48,7 @@ func newSyncEngine() (*sync.Engine, error) {
 
 	engine := sync.NewEngine(store, notesDir)
 	engine.SetRetryLimit(cfg.Sync.QueueRetryLimit)
+	engine.SetHooks(cfg.Hooks.PreSync, cfg.Hooks.PostSync, cfg.Hooks.OnConflict)
 
 	if cfg.Backends.Obsidian.Enabled && cfg.Backends.Obsidian.VaultPath != "" {
 		obs := obsidian.NewConnector(
@@ -66,6 +68,15 @@ func newSyncEngine() (*sync.Engine, error) {
 			notesDir,
 		)
 		engine.RegisterConnector("notion", conn)
+	}
+
+	if cfg.Backends.Git.Enabled && cfg.Backends.Git.RepoPath != "" {
+		gc := gitconnector.NewConnector(
+			cfg.Backends.Git.RepoPath,
+			cfg.Backends.Git.CommitMessage,
+			cfg.Backends.Git.Remote,
+		)
+		engine.RegisterConnector("git", gc)
 	}
 
 	return engine, nil

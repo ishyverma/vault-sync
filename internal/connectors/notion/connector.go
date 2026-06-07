@@ -33,6 +33,10 @@ func NewConnector(token, targetPageID, databaseID, notesDir string) *Connector {
 	}
 }
 
+func (c *Connector) Client() *Client {
+	return c.client
+}
+
 func (c *Connector) Name() string {
 	return "notion"
 }

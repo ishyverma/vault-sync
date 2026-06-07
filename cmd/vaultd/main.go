@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ishyverma/vault-sync/internal/config"
+	gitconnector "github.com/ishyverma/vault-sync/internal/connectors/git"
 	"github.com/ishyverma/vault-sync/internal/connectors/obsidian"
 	"github.com/ishyverma/vault-sync/internal/storage"
 	"github.com/ishyverma/vault-sync/internal/sync"
@@ -67,6 +68,16 @@ Press Ctrl+C to stop.`,
 
 		engine := sync.NewEngine(store, notesDir)
 		engine.SetRetryLimit(cfg.Sync.QueueRetryLimit)
+		engine.SetHooks(cfg.Hooks.PreSync, cfg.Hooks.PostSync, cfg.Hooks.OnConflict)
+
+		if cfg.Backends.Git.Enabled && cfg.Backends.Git.RepoPath != "" {
+			gc := gitconnector.NewConnector(
+				cfg.Backends.Git.RepoPath,
+				cfg.Backends.Git.CommitMessage,
+				cfg.Backends.Git.Remote,
+			)
+			engine.RegisterConnector("git", gc)
+		}
 
 		if cfg.Backends.Obsidian.Enabled && cfg.Backends.Obsidian.VaultPath != "" {
 			obs := obsidian.NewConnector(

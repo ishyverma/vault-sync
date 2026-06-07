@@ -1,0 +1,130 @@
+package git
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/ishyverma/vault-sync/internal/storage"
+)
+
+type Connector struct {
+	repoPath      string
+	autoCommit    bool
+	commitMessage string
+	remote        string
+}
+
+func NewConnector(repoPath, commitMessage, remote string) *Connector {
+	return &Connector{
+		repoPath:      repoPath,
+		autoCommit:    true,
+		commitMessage: commitMessage,
+		remote:        remote,
+	}
+}
+
+func (c *Connector) Name() string { return "git" }
+
+func (c *Connector) Connect() error {
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git not found: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(c.repoPath, ".git")); os.IsNotExist(err) {
+		if err := c.exec("init"); err != nil {
+			return fmt.Errorf("git init: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Connector) Status() (bool, error) {
+	if err := c.Connect(); err != nil {
+		return false, err
+	}
+	err := c.exec("status", "--porcelain")
+	return err == nil, err
+}
+
+func (c *Connector) Push(note *storage.Note, content string, remoteID string) (string, error) {
+	if !c.autoCommit {
+		return "", nil
+	}
+	if err := c.Connect(); err != nil {
+		return "", err
+	}
+
+	relPath := filepath.Join("notes", note.Filename)
+	absPath := filepath.Join(c.repoPath, relPath)
+
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("write: %w", err)
+	}
+
+	msg := strings.ReplaceAll(c.commitMessage, "{filename}", note.Filename)
+	msg = strings.ReplaceAll(msg, "{title}", note.Title)
+
+	if err := c.exec("add", relPath); err != nil {
+		return "", fmt.Errorf("git add: %w", err)
+	}
+	if err := c.exec("commit", "-m", msg); err != nil {
+		return "", fmt.Errorf("git commit: %w", err)
+	}
+
+	if c.remote != "" {
+		c.exec("push", c.remote, "main")
+	}
+
+	return "", nil
+}
+
+func (c *Connector) Pull(remoteID string) (string, error) {
+	return "", fmt.Errorf("git connector does not support pull")
+}
+
+func (c *Connector) Delete(remoteID string) error {
+	if !c.autoCommit {
+		return nil
+	}
+	if err := c.Connect(); err != nil {
+		return err
+	}
+
+	relPath := filepath.Join("notes", remoteID)
+	absPath := filepath.Join(c.repoPath, relPath)
+
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	if err := os.Remove(absPath); err != nil {
+		return fmt.Errorf("remove: %w", err)
+	}
+
+	msg := strings.ReplaceAll(c.commitMessage, "{filename}", remoteID)
+	if err := c.exec("add", relPath); err != nil {
+		return fmt.Errorf("git add: %w", err)
+	}
+	if err := c.exec("commit", "-m", fmt.Sprintf("delete: %s", msg)); err != nil {
+		return fmt.Errorf("git commit: %w", err)
+	}
+
+	if c.remote != "" {
+		c.exec("push", c.remote, "main")
+	}
+
+	return nil
+}
+
+func (c *Connector) exec(args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = c.repoPath
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run()
+}

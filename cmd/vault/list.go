@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -22,6 +23,7 @@ Examples:
 		}
 
 		tag, _ := cmd.Flags().GetString("tag")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		var notes []NoteRow
 		if tag != "" {
@@ -50,6 +52,10 @@ Examples:
 		if len(notes) == 0 {
 			fmt.Println("No notes found. Create one with: vault new <name>")
 			return nil
+		}
+
+		if asJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(notes)
 		}
 
 		fmt.Printf("%-30s %-20s %-10s\n", "NAME", "TITLE", "WORDS")
@@ -94,4 +100,5 @@ func formatTags(tags []string) string {
 func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().StringP("tag", "t", "", "Filter notes by tag")
+	listCmd.Flags().Bool("json", false, "Output as JSON")
 }

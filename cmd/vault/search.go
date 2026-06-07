@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -34,6 +35,11 @@ Examples:
 			return nil
 		}
 
+		asJSON, _ := cmd.Flags().GetBool("json")
+		if asJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(notes)
+		}
+
 		fmt.Printf("Found %d result(s) for %q:\n\n", len(notes), query)
 		fmt.Printf("%-30s %-20s %-10s\n", "NAME", "TITLE", "TAGS")
 		fmt.Println("──────────────────────────────────────────────────────────")
@@ -54,4 +60,5 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(searchCmd)
+	searchCmd.Flags().Bool("json", false, "Output as JSON")
 }

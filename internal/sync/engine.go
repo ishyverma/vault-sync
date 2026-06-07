@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -46,11 +47,14 @@ func (s Status) String() string {
 }
 
 type Engine struct {
-	mu          sync.RWMutex
-	store       *storage.NoteStore
-	connectors  map[string]connectors.Connector
-	notesDir    string
-	retryLimit  int
+	mu            sync.RWMutex
+	store         *storage.NoteStore
+	connectors    map[string]connectors.Connector
+	notesDir      string
+	retryLimit    int
+	preSyncHook   string
+	postSyncHook  string
+	onConflictHook string
 }
 
 func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
@@ -64,6 +68,22 @@ func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
 
 func (e *Engine) SetRetryLimit(limit int) {
 	e.retryLimit = limit
+}
+
+func (e *Engine) SetHooks(preSync, postSync, onConflict string) {
+	e.preSyncHook = preSync
+	e.postSyncHook = postSync
+	e.onConflictHook = onConflict
+}
+
+func (e *Engine) executeHook(cmd string) {
+	if cmd == "" {
+		return
+	}
+	c := exec.Command("sh", "-c", cmd)
+	c.Stdout = nil
+	c.Stderr = nil
+	c.Run()
 }
 
 func (e *Engine) RegisterConnector(name string, c connectors.Connector) {
@@ -104,6 +124,10 @@ func (e *Engine) PushNote(noteID string) error {
 	content, err := e.readNoteFile(note.Filename)
 	if err != nil {
 		return fmt.Errorf("read note file: %w", err)
+	}
+
+	if _, err := e.store.SaveVersion(noteID, content, "pre_sync"); err != nil {
+		return fmt.Errorf("save version: %w", err)
 	}
 
 	rawHash := computeHash(content)
@@ -173,6 +197,7 @@ func (e *Engine) PushNote(noteID string) error {
 					Status:   "conflict",
 					ErrorMsg: "remote file modified externally",
 				})
+				e.executeHook(e.onConflictHook)
 				continue
 			}
 		}
@@ -313,6 +338,11 @@ func (e *Engine) PullNote(noteID string) error {
 			}
 		}
 
+		if _, err := e.store.SaveVersion(noteID, localContent, "pre_pull"); err != nil {
+			e.recordPullFailure(noteID, name, fmt.Errorf("save pre-pull version: %w", err))
+			continue
+		}
+
 		localPath := filepath.Join(e.notesDir, note.Filename)
 		if err := atomicWriteLocal(localPath, remoteContent); err != nil {
 			e.recordPullFailure(noteID, name, fmt.Errorf("write local file: %w", err))
@@ -377,6 +407,9 @@ func (e *Engine) PullAll() error {
 }
 
 func (e *Engine) SyncAll() error {
+	e.executeHook(e.preSyncHook)
+	defer e.executeHook(e.postSyncHook)
+
 	if _, err := e.ProcessQueue(); err != nil {
 		return fmt.Errorf("process queue: %w", err)
 	}

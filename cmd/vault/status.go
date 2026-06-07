@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -41,6 +42,32 @@ The status column shows:
 		}
 
 		queueLen, _ := engine.QueueLength()
+		asJSON, _ := cmd.Flags().GetBool("json")
+
+		if asJSON {
+			var statusRows []map[string]interface{}
+			for _, n := range notes {
+				states, err := engine.SyncStatus(n.ID)
+				if err != nil || len(states) == 0 {
+					continue
+				}
+				for _, s := range states {
+					statusRows = append(statusRows, map[string]interface{}{
+						"note":       n.Filename,
+						"backend":    s.Backend,
+						"status":     s.Status,
+						"last_sync":  s.LastSyncAt,
+						"error":      s.ErrorMsg,
+						"remote_id":  s.RemoteID,
+					})
+				}
+			}
+			out := map[string]interface{}{
+				"queue_length": queueLen,
+				"entries":      statusRows,
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
+		}
 
 		fmt.Printf("%-30s %-12s %s\n", "NOTE", "STATUS", "LAST SYNC")
 		fmt.Println("──────────────────────────────────────────────────────────────")
@@ -96,4 +123,5 @@ func fmtDuration(d time.Duration) string {
 
 func init() {
 	syncCmd.AddCommand(syncStatusCmd)
+	syncStatusCmd.Flags().Bool("json", false, "Output as JSON")
 }

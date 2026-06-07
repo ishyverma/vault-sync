@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -278,6 +279,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConflict(msg)
 		case syncView:
 			return m.updateSync(msg)
+		case settingsView:
+			if msg.String() == "e" {
+				return m, openConfigCmd(m.config)
+			}
 		}
 	}
 
@@ -484,6 +489,27 @@ func (m *model) loadConflictDiff() tea.Cmd {
 			diff = "(identical)"
 		}
 		return conflictDiffMsg{diff: diff}
+	}
+}
+
+func openConfigCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		configPath, err := config.ConfigPath()
+		if err != nil {
+			return errMsg{err}
+		}
+		editor := cfg.Vault.Editor
+		if editor == "" {
+			editor = os.Getenv("EDITOR")
+		}
+		if editor == "" {
+			editor = "vim"
+		}
+		ecmd := exec.Command(editor, configPath)
+		ecmd.Stdin = os.Stdin
+		ecmd.Stdout = os.Stdout
+		ecmd.Stderr = os.Stderr
+		return errMsg{ecmd.Run()}
 	}
 }
 

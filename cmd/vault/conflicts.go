@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/ishyverma/vault-sync/internal/core"
+	"github.com/ishyverma/vault-sync/internal/storage"
 	"github.com/ishyverma/vault-sync/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -34,15 +36,22 @@ Use --resolve to auto-resolve all with a strategy.
 		if strategy != "" {
 			return resolveConflicts(engine, mgr, strategy)
 		}
-		return listConflicts(engine, mgr)
+
+		states, err := engine.ListConflicts()
+		if err != nil {
+			return fmt.Errorf("list conflicts: %w", err)
+		}
+
+		asJSON, _ := cmd.Flags().GetBool("json")
+		if asJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(states)
+		}
+
+		return renderConflictsTable(engine, mgr, states)
 	},
 }
 
-func listConflicts(engine *sync.Engine, mgr *core.Manager) error {
-	states, err := engine.ListConflicts()
-	if err != nil {
-		return fmt.Errorf("list conflicts: %w", err)
-	}
+func renderConflictsTable(engine *sync.Engine, mgr *core.Manager, states []*storage.SyncState) error {
 	if len(states) == 0 {
 		fmt.Println("✓ No conflicts detected")
 		return nil
@@ -108,4 +117,5 @@ func resolveConflicts(engine *sync.Engine, mgr *core.Manager, strategy string) e
 func init() {
 	rootCmd.AddCommand(conflictsCmd)
 	conflictsCmd.Flags().String("resolve", "", "Auto-resolve all conflicts (local|remote)")
+	conflictsCmd.Flags().Bool("json", false, "Output as JSON")
 }

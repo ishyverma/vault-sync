@@ -31,6 +31,9 @@ type Store interface {
 	QueueLength() (int, error)
 	AddSyncHistory(entry *SyncHistoryEntry) error
 	ListSyncHistory(noteID string) ([]*SyncHistoryEntry, error)
+	SaveVersion(noteID string, content string, trigger string) (*Version, error)
+	ListVersions(noteID string) ([]*Version, error)
+	GetVersion(noteID string, versionNum int) (*Version, error)
 }
 
 type NoteStore struct {
@@ -116,6 +119,15 @@ func (s *NoteStore) migrate() error {
 		status    TEXT NOT NULL,
 		synced_at DATETIME,
 		hash      TEXT DEFAULT ''
+	);
+
+	CREATE TABLE IF NOT EXISTS versions (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		note_id     TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+		version_num INTEGER NOT NULL DEFAULT 1,
+		content     TEXT NOT NULL,
+		saved_at    DATETIME,
+		trigger     TEXT DEFAULT 'save'
 	);
 	`
 
