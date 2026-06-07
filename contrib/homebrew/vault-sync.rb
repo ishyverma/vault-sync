@@ -1,17 +1,25 @@
 class VaultSync < Formula
   desc "A fast, local-first note manager with multi-backend sync (Obsidian, Notion, Git)"
   homepage "https://vaultsync.dev"
-  url "https://github.com/ishyverma/vault-sync.git",
-      tag:      "v1.0.0",
-      revision: "b37a0e58c958d101313027237cc77526e64c4c3c"
   license "MIT"
 
   depends_on "go" => :build
 
+  stable do
+    url "https://github.com/ishyverma/vault-sync.git",
+        tag:      "v1.0.0",
+        revision: "3bb6156d1c3bd6a5c41214500bb9448cf8eb8c87"
+  end
+
+  head do
+    url "https://github.com/ishyverma/vault-sync.git", branch: "main"
+  end
+
   def install
     ENV["CGO_ENABLED"] = "0"
-    system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=#{version}"), "./cmd/vault"
-    system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=#{version}"), "-o", bin/"vaultd", "./cmd/vaultd"
+    ldflags = "-s -w -X main.version=#{version}"
+    system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/vault"
+    system "go", "build", *std_go_args(ldflags: ldflags), "-o", bin/"vaultd", "./cmd/vaultd"
   end
 
   test do
