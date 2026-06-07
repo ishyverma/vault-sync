@@ -294,7 +294,11 @@ func (m model) View() string {
 
 	var notification string
 	if m.notification != "" && m.notifUntil.After(time.Now()) {
-		notification = "\n" + InfoStyle.Render("  "+m.notification) + "\n"
+		if strings.Contains(m.notification, "fail") || strings.Contains(m.notification, "error") {
+			notification = "\n" + ErrorStyle.Render("  "+m.notification) + "\n"
+		} else {
+			notification = "\n" + InfoStyle.Render("  "+m.notification) + "\n"
+		}
 	} else {
 		m.notification = ""
 	}

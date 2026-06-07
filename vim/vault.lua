@@ -35,20 +35,26 @@ function M.statusline()
   if not file:match(notes_dir) then
     return ''
   end
+  local basename = vim.fn.fnamemodify(file, ':t')
   local ok, result = pcall(vim.fn.system, vault_bin .. ' sync status --json 2>/dev/null')
   if not ok or vim.v.shell_error ~= 0 then
     return ''
   end
-  if result:find('"synced"') then
-    return ' ✓'
-  elseif result:find('"conflict"') then
-    return ' ⚠'
-  elseif result:find('"failed"') then
-    return ' ✗'
-  elseif result:find('"pending"') then
-    return ' ⟳'
+  local ok2, data = pcall(vim.fn.json_decode, result)
+  if not ok2 or type(data) ~= 'table' then
+    return ''
   end
-  return ''
+  local entries = data.entries or data
+  for _, entry in ipairs(entries) do
+    if entry.note == basename or entry.note == basename:gsub('%.md$', '') then
+      if entry.status == 'synced' then return ' ✓'
+      elseif entry.status == 'conflict' then return ' ⚠'
+      elseif entry.status == 'failed' then return ' ✗'
+      elseif entry.status == 'pending' then return ' ⟳'
+      end
+    end
+  end
+  return ' ○'
 end
 
 vim.api.nvim_create_autocmd('BufWritePost', {

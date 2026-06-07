@@ -77,7 +77,10 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 	}
 
 	if c.remote != "" {
-		c.exec("push", c.remote, "main")
+		branch := c.currentBranch()
+		if err := c.exec("push", c.remote, branch); err != nil {
+			return "", fmt.Errorf("git push: %w", err)
+		}
 	}
 
 	return "", nil
@@ -115,16 +118,29 @@ func (c *Connector) Delete(remoteID string) error {
 	}
 
 	if c.remote != "" {
-		c.exec("push", c.remote, "main")
+		branch := c.currentBranch()
+		if err := c.exec("push", c.remote, branch); err != nil {
+			return fmt.Errorf("git push: %w", err)
+		}
 	}
 
 	return nil
 }
 
+func (c *Connector) currentBranch() string {
+	out, err := exec.Command("git", "-C", c.repoPath, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return "main"
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (c *Connector) exec(args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = c.repoPath
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return nil
 }

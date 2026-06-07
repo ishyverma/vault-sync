@@ -331,8 +331,10 @@ func (e *Engine) PullNote(noteID string) error {
 			continue
 		}
 
+		remoteFm, remoteBody, _ := core.ParseFrontmatter(remoteContent)
 		remoteHash := computeHash(remoteContent)
-		if remoteHash == state.LastHash {
+		remoteCanonical := e.canonicalHash(name, remoteFm, remoteBody, remoteHash)
+		if remoteCanonical == state.LastHash {
 			continue
 		}
 
@@ -396,7 +398,7 @@ func (e *Engine) PullNote(noteID string) error {
 			Backend:    name,
 			RemoteID:   state.RemoteID,
 			LastSyncAt: time.Now().UTC(),
-			LastHash:   remoteHash,
+			LastHash:   remoteCanonical,
 			Status:     "synced",
 		})
 	}

@@ -41,6 +41,7 @@ Example:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		token, _ := cmd.Flags().GetString("token")
 		targetPageID, _ := cmd.Flags().GetString("target-page-id")
+		databaseID, _ := cmd.Flags().GetString("database-id")
 
 		if token == "" {
 			return fmt.Errorf("--token is required (get one at https://www.notion.so/my-integrations)")
@@ -51,7 +52,7 @@ Example:
 			return fmt.Errorf("load config: %w", err)
 		}
 
-		conn := notion.NewConnector(token, targetPageID, "", "")
+		conn := notion.NewConnector(token, targetPageID, databaseID, "")
 		if err := conn.Connect(); err != nil {
 			return fmt.Errorf("verify notion token: %w", err)
 		}
@@ -61,6 +62,9 @@ Example:
 		if targetPageID != "" {
 			cfg.Backends.Notion.TargetPageID = targetPageID
 		}
+		if databaseID != "" {
+			cfg.Backends.Notion.DatabaseID = databaseID
+		}
 
 		if err := config.Save(cfg); err != nil {
 			return fmt.Errorf("save config: %w", err)
@@ -69,6 +73,9 @@ Example:
 		fmt.Println("✓ Connected to Notion")
 		if targetPageID != "" {
 			fmt.Printf("  Notes will be created under target page: %s\n", targetPageID)
+		}
+		if databaseID != "" {
+			fmt.Printf("  Using database: %s\n", databaseID)
 		}
 		fmt.Println()
 		fmt.Println("  Next step: run 'vault sync' to push your notes to Notion")
@@ -135,4 +142,5 @@ func init() {
 	connectObsidianCmd.Flags().String("subfolder", "VaultSync", "Subfolder within the Obsidian vault")
 	connectNotionCmd.Flags().String("token", "", "Notion integration token (required)")
 	connectNotionCmd.Flags().String("target-page-id", "", "Parent Notion page ID for notes")
+	connectNotionCmd.Flags().String("database-id", "", "Notion database ID for database sync mode")
 }
