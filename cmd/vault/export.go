@@ -51,17 +51,19 @@ Examples:
 
 		output, _ := cmd.Flags().GetString("output")
 
+		notesDir := mgr.NotesDir()
+
 		switch format {
 		case "html":
-			return exportHTML(note.Filename, string(content), output)
+			return exportHTML(notesDir, note.Filename, string(content), output)
 		case "pdf":
-			return exportPDF(note.Filename, string(content), output)
+			return exportPDF(notesDir, note.Filename, string(content), output)
 		}
 		return nil
 	},
 }
 
-func exportHTML(filename, content, outputPath string) error {
+func exportHTML(notesDir, filename, content, outputPath string) error {
 	md := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
 	)
@@ -94,7 +96,7 @@ func exportHTML(filename, content, outputPath string) error {
 </html>`, html.EscapeString(title), buf.String())
 
 	if outputPath == "" {
-		outputPath = strings.TrimSuffix(filename, ".md") + ".html"
+		outputPath = filepath.Join(notesDir, strings.TrimSuffix(filename, ".md")+".html")
 	}
 
 	if err := os.WriteFile(outputPath, []byte(htmlContent), 0o644); err != nil {
@@ -106,15 +108,15 @@ func exportHTML(filename, content, outputPath string) error {
 	return nil
 }
 
-func exportPDF(filename, content, outputPath string) error {
-	htmlPath := strings.TrimSuffix(filename, ".md") + ".html"
-	if err := exportHTML(filename, content, htmlPath); err != nil {
+func exportPDF(notesDir, filename, content, outputPath string) error {
+	htmlPath := filepath.Join(notesDir, strings.TrimSuffix(filename, ".md")+".html")
+	if err := exportHTML(notesDir, filename, content, htmlPath); err != nil {
 		return err
 	}
 	defer os.Remove(htmlPath)
 
 	if outputPath == "" {
-		outputPath = strings.TrimSuffix(filename, ".md") + ".pdf"
+		outputPath = filepath.Join(notesDir, strings.TrimSuffix(filename, ".md")+".pdf")
 	}
 
 	if _, err := exec.LookPath("pandoc"); err != nil {
