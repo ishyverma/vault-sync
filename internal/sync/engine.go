@@ -91,6 +91,19 @@ func (e *Engine) PushNote(noteID string) error {
 
 	currentHash := computeHash(content)
 
+	// Sync note metadata from frontmatter
+	fm, body, fmErr := core.ParseFrontmatter(content)
+	if fmErr == nil && fm.Title != "" && fm.Title != note.Title {
+		note.Title = fm.Title
+		note.Tags = fm.Tags
+		note.Content = content
+		note.ContentHash = currentHash
+		note.WordCount = core.WordCount(body)
+		if err := e.store.UpdateNote(note); err != nil {
+			return fmt.Errorf("update note metadata: %w", err)
+		}
+	}
+
 	var backendErrs []string
 
 	for name, conn := range e.getConnectors() {
