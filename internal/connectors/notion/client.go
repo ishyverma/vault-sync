@@ -248,6 +248,7 @@ func (c *Client) QueryDatabase(databaseID string, req *QueryDatabaseRequest) (*Q
 }
 
 func (c *Client) Status() error {
-	_, err := c.Search("")
-	return err
+	req := SearchRequest{Query: "", PageSize: 1}
+	var resp SearchResponse
+	return c.do("POST", "/search", &req, &resp)
 }

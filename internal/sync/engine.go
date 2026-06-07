@@ -254,7 +254,8 @@ func (e *Engine) canonicalHash(backend string, fm core.Frontmatter, body string,
 
 func (e *Engine) ProcessQueue() (int, error) {
 	var processed int
-	for {
+	const maxProcessed = 1000
+	for processed < maxProcessed {
 		item, err := e.store.DequeueSyncJob()
 		if err != nil {
 			if errors.Is(err, storage.ErrSyncJobNotFound) {
@@ -279,6 +280,8 @@ func (e *Engine) ProcessQueue() (int, error) {
 		if processErr != nil {
 			if isConnectivityError(processErr) {
 				e.store.EnqueueSyncJob(item.NoteID, item.Backends, item.Direction, item.Attempts+1)
+			} else {
+				e.recordFailure(item.NoteID, strings.Join(item.Backends, ","), processErr)
 			}
 		}
 		processed++
@@ -314,6 +317,11 @@ func (e *Engine) PullNote(noteID string) error {
 			continue
 		}
 
+		if err := conn.Connect(); err != nil {
+			e.recordPullFailure(noteID, name, err)
+			continue
+		}
+
 		remoteContent, pullErr := conn.Pull(state.RemoteID)
 		if pullErr != nil {
 			if errors.Is(pullErr, notion.ErrNotFound) || os.IsNotExist(pullErr) {
@@ -333,7 +341,15 @@ func (e *Engine) PullNote(noteID string) error {
 			localFm, localBody, _ := core.ParseFrontmatter(localContent)
 			localCanonical := e.canonicalHash(name, localFm, localBody, computeHash(localContent))
 			if localCanonical != state.LastHash {
-				e.recordPullFailure(noteID, name, fmt.Errorf("local changes conflict with remote changes"))
+				e.store.UpsertSyncState(&storage.SyncState{
+					NoteID:   noteID,
+					Backend:  name,
+					RemoteID: state.RemoteID,
+					LastHash: state.LastHash,
+					Status:   "conflict",
+					ErrorMsg: "local changes conflict with remote changes",
+				})
+				e.executeHook(e.onConflictHook)
 				continue
 			}
 		}
@@ -410,16 +426,15 @@ func (e *Engine) SyncAll() error {
 	e.executeHook(e.preSyncHook)
 	defer e.executeHook(e.postSyncHook)
 
-	if _, err := e.ProcessQueue(); err != nil {
-		return fmt.Errorf("process queue: %w", err)
-	}
-
 	notes, err := e.store.ListNotes()
 	if err != nil {
 		return fmt.Errorf("list notes: %w", err)
 	}
 
 	var firstErr error
+
+	e.ProcessQueue()
+
 	for _, note := range notes {
 		if err := e.PushNote(note.ID); err != nil {
 			if firstErr == nil {
@@ -428,11 +443,18 @@ func (e *Engine) SyncAll() error {
 		}
 	}
 
-	if _, err := e.ProcessQueue(); err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("process queue: %w", err)
+	e.ProcessQueue()
+
+	for _, note := range notes {
+		if err := e.PullNote(note.ID); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
+
+	e.ProcessQueue()
+
 	return firstErr
 }
 
@@ -451,6 +473,11 @@ func (e *Engine) ResolveConflict(noteID, backend, strategy string) error {
 	state, err := e.store.GetSyncState(noteID, backend)
 	if err != nil {
 		return fmt.Errorf("get sync state: %w", err)
+	}
+
+	content, _ := e.readNoteFile(note.Filename)
+	if content != "" {
+		e.store.SaveVersion(noteID, content, "pre_resolve:"+strategy)
 	}
 
 	switch strategy {

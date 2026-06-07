@@ -331,6 +331,9 @@ func (d *Daemon) syncRunner(ctx context.Context) {
 	for {
 		select {
 		case <-d.syncCh:
+			if _, err := d.engine.ProcessQueue(); err != nil {
+				log.Printf("process queue error: %v", err)
+			}
 			if err := d.engine.PushAll(); err != nil {
 				log.Printf("push error: %v", err)
 			}
@@ -338,6 +341,9 @@ func (d *Daemon) syncRunner(ctx context.Context) {
 				if err := d.engine.PullAll(); err != nil {
 					log.Printf("pull error: %v", err)
 				}
+			}
+			if _, err := d.engine.ProcessQueue(); err != nil {
+				log.Printf("process queue error: %v", err)
 			}
 		case <-ctx.Done():
 			return

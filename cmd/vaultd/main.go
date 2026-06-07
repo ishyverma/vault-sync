@@ -9,6 +9,7 @@ import (
 
 	"github.com/ishyverma/vault-sync/internal/config"
 	gitconnector "github.com/ishyverma/vault-sync/internal/connectors/git"
+	"github.com/ishyverma/vault-sync/internal/connectors/notion"
 	"github.com/ishyverma/vault-sync/internal/connectors/obsidian"
 	"github.com/ishyverma/vault-sync/internal/storage"
 	"github.com/ishyverma/vault-sync/internal/sync"
@@ -87,6 +88,16 @@ Press Ctrl+C to stop.`,
 				cfg.Backends.Obsidian.Wikilinks,
 			)
 			engine.RegisterConnector("obsidian", obs)
+		}
+
+		if cfg.Backends.Notion.Enabled && cfg.Backends.Notion.Token != "" {
+			nc := notion.NewConnector(
+				cfg.Backends.Notion.Token,
+				cfg.Backends.Notion.TargetPageID,
+				cfg.Backends.Notion.DatabaseID,
+				notesDir,
+			)
+			engine.RegisterConnector("notion", nc)
 		}
 
 		pollInterval := time.Duration(interval) * time.Second
