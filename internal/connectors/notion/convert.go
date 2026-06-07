@@ -287,6 +287,16 @@ func convertInline(n gast.Node, source []byte) []RichText {
 		}
 		return children
 
+	case extensionast.KindStrikethrough:
+		children := extractRichText(n, source)
+		for i := range children {
+			if children[i].Annotations == nil {
+				children[i].Annotations = &Annotations{}
+			}
+			children[i].Annotations.Strikethrough = true
+		}
+		return children
+
 	default:
 		return nil
 	}
@@ -479,33 +489,27 @@ func richTextToAnnotated(rt []RichText) string {
 				linkURL = r.Text.Link.URL
 			}
 
+			annotated := content
 			if r.Annotations != nil {
 				if r.Annotations.Code {
 					b.WriteString("`" + content + "`")
 					continue
 				}
-				if linkURL != "" {
-					b.WriteString("[" + content + "](" + linkURL + ")")
-					continue
-				}
 				if r.Annotations.Bold && r.Annotations.Italic {
-					b.WriteString("***" + content + "***")
-					continue
+					annotated = "***" + annotated + "***"
+				} else if r.Annotations.Bold {
+					annotated = "**" + annotated + "**"
+				} else if r.Annotations.Italic {
+					annotated = "*" + annotated + "*"
 				}
-				if r.Annotations.Bold {
-					b.WriteString("**" + content + "**")
-					continue
-				}
-				if r.Annotations.Italic {
-					b.WriteString("*" + content + "*")
-					continue
+				if r.Annotations.Strikethrough {
+					annotated = "~~" + annotated + "~~"
 				}
 			}
 			if linkURL != "" {
-				b.WriteString("[" + content + "](" + linkURL + ")")
-				continue
+				annotated = "[" + annotated + "](" + linkURL + ")"
 			}
-			b.WriteString(content)
+			b.WriteString(annotated)
 		}
 	}
 	return b.String()
