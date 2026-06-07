@@ -148,6 +148,17 @@ func (c *Client) AppendBlocks(pageID string, req *AppendBlocksRequest) error {
 	return c.do("PATCH", "/blocks/"+pageID+"/children", req, nil)
 }
 
+func (c *Client) AppendBlocksWithResponse(pageID string, req *AppendBlocksRequest) ([]Block, error) {
+	var resp struct {
+		Results []Block `json:"results"`
+	}
+	err := c.do("PATCH", "/blocks/"+pageID+"/children", req, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Results, nil
+}
+
 func (c *Client) GetBlocks(pageID string) ([]Block, error) {
 	blocks, err := c.fetchBlockPage(pageID, "")
 	if err != nil {

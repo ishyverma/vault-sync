@@ -73,12 +73,18 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 
 	body = embedTags(body, fm.Tags)
 
+	// Use frontmatter title if available, fall back to DB title
+	title := note.Title
+	if fm.Title != "" {
+		title = fm.Title
+	}
+
 	blocks, err := MarkdownToBlocks(body)
 	if err != nil {
 		return "", fmt.Errorf("convert markdown: %w", err)
 	}
 
-	properties := buildProperties(note)
+	properties := buildProperties(title)
 
 	if c.targetPageID == "" {
 		return "", fmt.Errorf("notion target page not configured: set target_page_id in config")
@@ -98,14 +104,19 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		return remoteID, nil
 	}
 
-	// Create new page
+	// Create new page (without children — append them separately)
 	page, err := c.client.CreatePage(&CreatePageRequest{
 		Parent:     Parent{Type: "page_id", PageID: c.targetPageID},
 		Properties: properties,
-		Children:   blocks,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create notion page: %w", err)
+	}
+
+	if len(blocks) > 0 {
+		if err := c.appendBlocksRecursive(page.ID, blocks); err != nil {
+			return "", fmt.Errorf("append blocks: %w", err)
+		}
 	}
 
 	return page.ID, nil
@@ -141,11 +152,39 @@ func (c *Connector) replaceBlocks(pageID string, newBlocks []Block) error {
 	}
 
 	if len(newBlocks) > 0 {
-		if err := c.client.AppendBlocks(pageID, &AppendBlocksRequest{Children: newBlocks}); err != nil {
+		if err := c.appendBlocksRecursive(pageID, newBlocks); err != nil {
 			return fmt.Errorf("append blocks: %w", err)
 		}
 	}
 
+	return nil
+}
+
+func (c *Connector) appendBlocksRecursive(parentID string, blocks []Block) error {
+	// Strip children for the initial append
+	stripped := make([]Block, len(blocks))
+	childMap := make(map[int][]Block)
+	for i, b := range blocks {
+		stripped[i] = b
+		stripped[i].Children = nil
+		if len(b.Children) > 0 {
+			childMap[i] = b.Children
+		}
+	}
+
+	resp, err := c.client.AppendBlocksWithResponse(parentID, &AppendBlocksRequest{Children: stripped})
+	if err != nil {
+		return err
+	}
+
+	// Append nested children to each created parent block
+	for i, children := range childMap {
+		if i < len(resp) && resp[i].ID != "" {
+			if err := c.appendBlocksRecursive(resp[i].ID, children); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -186,14 +225,14 @@ func (c *Connector) Delete(remoteID string) error {
 	return c.client.DeletePage(remoteID)
 }
 
-func buildProperties(note *storage.Note) map[string]Property {
-	if note == nil {
+func buildProperties(title string) map[string]Property {
+	if title == "" {
 		return map[string]Property{}
 	}
 	return map[string]Property{
 		"title": {
 			Type:  "title",
-			Title: []RichText{{Type: "text", Text: &TextContent{Content: note.Title}}},
+			Title: []RichText{{Type: "text", Text: &TextContent{Content: title}}},
 		},
 	}
 }

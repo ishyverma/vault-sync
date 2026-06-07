@@ -140,11 +140,14 @@ func convertNode(n gast.Node, source []byte) (*Block, error) {
 	case gast.KindCodeBlock:
 		content := string(n.Text(nil))
 		rt := []RichText{{Type: "text", Text: &TextContent{Content: strings.TrimSuffix(content, "\n")}}}
-		return &Block{Type: BlockCode, Code: &CodeBlock{RichText: rt, Language: ""}}, nil
+		return &Block{Type: BlockCode, Code: &CodeBlock{RichText: rt, Language: "plain text"}}, nil
 
 	case gast.KindFencedCodeBlock:
 		fcb := n.(*gast.FencedCodeBlock)
 		lang := string(fcb.Language(source))
+		if lang == "" || lang == "plain" {
+			lang = "plain text"
+		}
 		content := string(n.Text(source))
 		rt := []RichText{{Type: "text", Text: &TextContent{Content: strings.TrimSuffix(content, "\n")}}}
 		return &Block{Type: BlockCode, Code: &CodeBlock{RichText: rt, Language: lang}}, nil
@@ -210,7 +213,7 @@ func convertImage(n gast.Node, source []byte) (*Block, error) {
 	url := string(img.Destination)
 	caption := string(img.Title)
 	if caption == "" {
-		caption = string(n.Text(source))
+		caption = string(img.Text(source))
 	}
 
 	var captionRT []RichText
@@ -450,11 +453,10 @@ func blockToMarkdownLine(b Block) (string, error) {
 			return "\n", nil
 		}
 		lang := b.Code.Language
-		if lang == "" {
-			lang = "text"
+		if lang == "" || lang == "plain text" {
+			return "```\n" + richTextToPlain(b.Code.RichText) + "\n```\n", nil
 		}
-		content := richTextToPlain(b.Code.RichText)
-		return "```" + lang + "\n" + content + "\n```\n", nil
+		return "```" + lang + "\n" + richTextToPlain(b.Code.RichText) + "\n```\n", nil
 	case BlockQuote:
 		if b.Quote == nil {
 			return "\n", nil
