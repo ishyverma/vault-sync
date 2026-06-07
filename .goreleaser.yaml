@@ -9,11 +9,8 @@ builds:
   - id: vault
     binary: vault
     main: ./cmd/vault
-    env:
-      - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
       - arm64
@@ -23,11 +20,8 @@ builds:
   - id: vaultd
     binary: vaultd
     main: ./cmd/vaultd
-    env:
-      - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
       - arm64
