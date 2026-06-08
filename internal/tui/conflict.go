@@ -116,12 +116,12 @@ func (m model) conflictView() string {
 		if i == m.conflictCursor {
 			prefix = "▸ "
 		}
-		note, err := m.store.GetNote(c.NoteID)
-		if err != nil {
-			continue
+		filename := m.conflictNoteMap[c.NoteID]
+		if filename == "" {
+			filename = c.NoteID
 		}
 
-		b.WriteString(fmt.Sprintf("%s⚠ %s\n", prefix, note.Filename))
+		b.WriteString(fmt.Sprintf("%s⚠ %s\n", prefix, filename))
 		b.WriteString(SubtleStyle.Render(fmt.Sprintf("   Backend: %s", c.Backend)))
 		b.WriteString("\n")
 		if c.ErrorMsg != "" {

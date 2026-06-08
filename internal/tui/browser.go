@@ -29,15 +29,20 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.browserFiltering = false
 			m.browserFilter.SetValue("")
 			m.browserFilter.Blur()
+			m.browserDirty = true
+			m.buildBrowserCache()
 			return m, nil
 		case "enter":
 			m.browserFiltering = false
 			m.browserFilter.Blur()
+			m.browserDirty = true
+			m.buildBrowserCache()
 			return m, nil
 		}
 		var filterCmd tea.Cmd
 		m.browserFilter, filterCmd = m.browserFilter.Update(msg)
-		m.browserTable.SetRows(m.buildTableRows())
+		m.browserDirty = true
+		m.buildBrowserCache()
 		return m, filterCmd
 	}
 
@@ -59,7 +64,7 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	m.browserTable.SetRows(m.buildTableRows())
+	m.buildBrowserCache()
 	m.browserTable, cmd = m.browserTable.Update(msg)
 
 	if row := m.browserTable.SelectedRow(); len(row) > 0 {
@@ -91,6 +96,7 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "s":
 		m.browserSort = (m.browserSort + 1) % 3
+		m.browserDirty = true
 		return m, nil
 	case "p":
 		if m.previewNote != nil {
@@ -102,6 +108,7 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "P":
 		m.showPinnedOnly = !m.showPinnedOnly
+		m.browserDirty = true
 		return m, nil
 	case "d":
 		if m.previewNote != nil {
@@ -238,8 +245,10 @@ func (m model) browserView() string {
 		b.WriteString("\n")
 	}
 
-	rows := m.buildTableRows()
-	m.browserTable.SetRows(rows)
+	if m.browserDirty {
+		m.buildBrowserCache()
+	}
+	b.WriteString(TableStyle.Render(m.browserTable.View()))
 
 	b.WriteString(TableStyle.Render(m.browserTable.View()))
 	b.WriteString("\n")
@@ -259,7 +268,7 @@ func (m model) browserView() string {
 	return b.String()
 }
 
-func (m model) buildTableRows() []table.Row {
+func (m *model) buildBrowserCache() {
 	var rows []table.Row
 	filter := strings.ToLower(m.browserFilter.Value())
 	for _, n := range m.notes {
@@ -334,7 +343,9 @@ func (m model) buildTableRows() []table.Row {
 		})
 	}
 
-	return rows
+	m.browserRowsCache = rows
+	m.browserTable.SetRows(rows)
+	m.browserDirty = false
 }
 
 func truncate(s string, n int) string {

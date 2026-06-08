@@ -87,6 +87,22 @@ type model struct {
 	promptAction string // "tag", "rename", "move", "noteid"
 	promptNoteID string
 	promptTitle  string
+
+	// Performance caches
+	browserRowsCache []table.Row
+	browserDirty     bool
+
+	conflictNoteMap map[string]string // noteID -> filename
+	searchSnippets  map[string]string // noteID -> snippet
+
+	dashStorage   string // cached "12.3 KB" etc
+	dashStreak    int
+	dashWords     int
+	dashStatsStr  string // "12 notes | 34 words today | 12.3 KB | 5 day streak"
+	dashSyncStr   string // pre-rendered sync status block
+	dashTagsStr   string // pre-rendered top tags block
+	dashRecentStr string // pre-rendered recent notes block
+	dashConnStr   string // pre-rendered connections block
 }
 
 func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config, mgr *core.Manager) model {
@@ -137,20 +153,23 @@ func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config,
 	pi.Width = 40
 
 	return model{
-		state:        dashboardView,
-		store:        store,
-		engine:       engine,
-		config:       cfg,
-		manager:      mgr,
-		help:         help.New(),
-		keys:         defaultKeyMap(),
-		searchInput:    ti,
-		browserFilter:  bf,
-		browserTable:   t,
-		notePreview:    vp,
-		diffView:       dv,
-		promptInput:    pi,
-		syncStateMap:   make(map[string][]*storage.SyncState),
+		state:           dashboardView,
+		store:           store,
+		engine:          engine,
+		config:          cfg,
+		manager:         mgr,
+		help:            help.New(),
+		keys:            defaultKeyMap(),
+		searchInput:     ti,
+		browserFilter:   bf,
+		browserTable:    t,
+		notePreview:     vp,
+		diffView:        dv,
+		promptInput:     pi,
+		syncStateMap:    make(map[string][]*storage.SyncState),
+		conflictNoteMap: make(map[string]string),
+		searchSnippets:  make(map[string]string),
+		browserDirty:    true,
 	}
 }
 
@@ -198,7 +217,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case notesLoadedMsg:
 		m.notes = msg.notes
-		m.browserTable.SetRows(m.buildTableRows())
+		m.browserDirty = true
+		m.buildBrowserCache()
+		m.buildDashboardCache()
 		return m, nil
 
 	case syncDataMsg:
@@ -206,15 +227,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncQueueLen = msg.queueLen
 		m.syncHistory = msg.history
 		m.syncStateMap = buildSyncStateMap(msg.states)
+		m.browserDirty = true
+		m.buildDashboardCache()
 		return m, nil
 
 	case searchResultsMsg:
 		m.searchResults = msg.results
+		m.searchSnippets = make(map[string]string)
+		query := strings.ToLower(m.searchInput.Value())
+		for _, note := range msg.results {
+			m.searchSnippets[note.ID] = m.computeSnippet(note, query)
+		}
 		return m, nil
 
 	case conflictsLoadedMsg:
 		m.conflicts = msg.states
 		m.conflictCursor = 0
+		m.conflictNoteMap = make(map[string]string)
+		for _, c := range msg.states {
+			note, err := m.store.GetNote(c.NoteID)
+			if err == nil {
+				m.conflictNoteMap[c.NoteID] = note.Filename
+			}
+		}
 		return m, nil
 
 	case syncCompleteMsg:

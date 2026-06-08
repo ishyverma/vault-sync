@@ -70,7 +70,10 @@ func (m model) searchView() string {
 				prefix = "▸ "
 			}
 			b.WriteString(fmt.Sprintf("%s%s — %s\n", prefix, note.Filename, note.Title))
-			snippet := m.searchSnippet(note, query)
+			snippet := m.searchSnippets[note.ID]
+			if snippet == "" {
+				snippet = m.searchSnippets[note.Filename]
+			}
 			if snippet != "" {
 				b.WriteString(SubtleStyle.Render(fmt.Sprintf("   %s\n", snippet)))
 			}
@@ -84,7 +87,7 @@ func (m model) searchView() string {
 	return b.String()
 }
 
-func (m model) searchSnippet(note *storage.Note, query string) string {
+func (m model) computeSnippet(note *storage.Note, query string) string {
 	notePath := filepath.Join(m.manager.NotesDir(), note.Filename)
 	data, err := os.ReadFile(notePath)
 	if err != nil {
