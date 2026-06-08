@@ -11,8 +11,8 @@ license=('MIT')
 depends=('glibc')
 source_x86_64=("${pkgname}-${pkgver}-x86_64.tar.gz::https://github.com/ishyverma/vault-sync/releases/latest/download/vault-sync_Linux_x86_64.tar.gz")
 source_aarch64=("${pkgname}-${pkgver}-aarch64.tar.gz::https://github.com/ishyverma/vault-sync/releases/latest/download/vault-sync_Linux_arm64.tar.gz")
-sha256sums_x86_64=('TBD')
-sha256sums_aarch64=('TBD')
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
 
 package() {
   install -Dm755 vault "${pkgdir}/usr/bin/vault"

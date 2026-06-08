@@ -82,7 +82,7 @@ func runInit(cmd *cobra.Command) error {
 	editor := detectEditor()
 
 	cfg := config.DefaultConfig()
-	cfg.Vault.Path = notesDir
+	cfg.Vault.Path = vaultDir
 	cfg.Vault.Editor = editor
 	cfg.Vault.TemplateDir = templatesDir
 
@@ -146,14 +146,19 @@ List all notes:
 		if parseErr != nil {
 			return fmt.Errorf("parse welcome note frontmatter: %w", parseErr)
 		}
+		noteID, genErr := core.GenerateID()
+		if genErr != nil {
+			return fmt.Errorf("generate id: %w", genErr)
+		}
 		if err := store.CreateNote(&storage.Note{
-			ID:        core.GenerateID(),
-			Filename:  "welcome.md",
-			Title:     fm.Title,
-			Path:      "welcome.md",
-			Content:   body,
-			Tags:      fm.Tags,
-			WordCount: core.WordCount(body),
+			ID:          noteID,
+			Filename:    "welcome.md",
+			Title:       fm.Title,
+			Path:        "welcome.md",
+			Content:     sampleContent,
+			ContentHash: core.ComputeHash(sampleContent),
+			Tags:        fm.Tags,
+			WordCount:   core.WordCount(body),
 		}); err != nil {
 			return fmt.Errorf("create welcome note: %w", err)
 		}

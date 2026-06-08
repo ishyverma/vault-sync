@@ -32,6 +32,7 @@ const (
 	syncView
 	settingsView
 	conflictView
+	viewCount
 )
 
 type model struct {
@@ -64,6 +65,7 @@ type model struct {
 	syncHistory []*storage.SyncHistoryEntry
 	syncStates  []*storage.SyncState
 	syncQueueLen int
+	syncStateMap map[string][]*storage.SyncState
 
 	conflicts []*storage.SyncState
 	conflictDetail string
@@ -74,9 +76,17 @@ type model struct {
 	notification string
 	notifUntil   time.Time
 
+	showPinnedOnly bool
+
 	showDiff    bool
 	diffContent string
 	diffView    viewport.Model
+
+	promptInput  textinput.Model
+	promptActive bool
+	promptAction string // "tag", "rename", "move", "noteid"
+	promptNoteID string
+	promptTitle  string
 }
 
 func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config, mgr *core.Manager) model {
@@ -89,9 +99,11 @@ func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config,
 	t := table.New(
 		table.WithColumns([]table.Column{
 			{Title: "Name", Width: 20},
-			{Title: "Title", Width: 25},
+			{Title: "Title", Width: 19},
 			{Title: "Words", Width: 6},
 			{Title: "Modified", Width: 12},
+			{Title: "Tags", Width: 14},
+			{Title: "Sync", Width: 8},
 		}),
 		table.WithFocused(true),
 		table.WithHeight(15),
@@ -120,6 +132,10 @@ func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config,
 	dv := viewport.New(70, 20)
 	dv.Style = lipgloss.NewStyle().PaddingLeft(2)
 
+	pi := textinput.New()
+	pi.CharLimit = 100
+	pi.Width = 40
+
 	return model{
 		state:        dashboardView,
 		store:        store,
@@ -133,6 +149,8 @@ func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config,
 		browserTable:   t,
 		notePreview:    vp,
 		diffView:       dv,
+		promptInput:    pi,
+		syncStateMap:   make(map[string][]*storage.SyncState),
 	}
 }
 
@@ -150,15 +168,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.help.Width = msg.Width
 		tableWidth := msg.Width - 10
-		if tableWidth < 40 {
-			tableWidth = 40
+		if tableWidth < 60 {
+			tableWidth = 60
 		}
 		curCols := m.browserTable.Columns()
-		if len(curCols) >= 4 {
-			nameW := tableWidth * 3 / 10
-			titleW := tableWidth * 4 / 10
+		if len(curCols) >= 6 {
+			nameW := tableWidth * 22 / 100
+			titleW := tableWidth * 25 / 100
 			wordsW := 6
-			dateW := tableWidth - nameW - titleW - wordsW - 3
+			tagsW := tableWidth * 20 / 100
+			syncW := 8
+			dateW := tableWidth - nameW - titleW - wordsW - tagsW - syncW - 5
 			if dateW < 10 {
 				dateW = 10
 			}
@@ -166,6 +186,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			curCols[1].Width = titleW
 			curCols[2].Width = wordsW
 			curCols[3].Width = dateW
+			curCols[4].Width = tagsW
+			curCols[5].Width = syncW
 			m.browserTable.SetColumns(curCols)
 		}
 		m.notePreview.Width = msg.Width - 10
@@ -183,6 +205,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncStates = msg.states
 		m.syncQueueLen = msg.queueLen
 		m.syncHistory = msg.history
+		m.syncStateMap = buildSyncStateMap(msg.states)
 		return m, nil
 
 	case searchResultsMsg:
@@ -197,9 +220,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case syncCompleteMsg:
 		if msg.err != nil {
 			m.err = fmt.Errorf("sync failed: %w", msg.err)
-			m.notification = "Sync failed"
+			if m.config.Notifications.SyncFailure {
+				m.notification = "Sync failed"
+			}
 		} else {
-			m.notification = "Sync complete"
+			if m.config.Notifications.SyncSuccess {
+				m.notification = "Sync complete"
+			}
 		}
 		m.notifUntil = time.Now().Add(3 * time.Second)
 		return m, tea.Batch(m.loadNotes(), m.loadSyncData())
@@ -223,6 +250,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.loadConflicts()
 
+	case configReloadedMsg:
+		m.config = msg.cfg
+		m.notification = "Config reloaded"
+		m.notifUntil = time.Now().Add(3 * time.Second)
+		return m, nil
+
+	case exportDoneMsg:
+		m.notification = fmt.Sprintf("Exported to %s", msg.name)
+		m.notifUntil = time.Now().Add(3 * time.Second)
+		return m, nil
+
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -233,12 +271,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.promptActive {
+			switch msg.String() {
+			case "esc":
+				m.promptActive = false
+				m.promptInput.SetValue("")
+				m.promptInput.Blur()
+				return m, nil
+			case "enter":
+				val := m.promptInput.Value()
+				m.promptActive = false
+				m.promptInput.SetValue("")
+				m.promptInput.Blur()
+				return m.handlePromptSubmit(m.promptAction, val)
+			}
+			var cmd tea.Cmd
+			m.promptInput, cmd = m.promptInput.Update(msg)
+			return m, cmd
+		}
+
 		if m.state == searchView {
 			switch {
 			case key.Matches(msg, m.keys.TabNext):
-				return m.switchView(viewState((int(m.state) + 1) % 6))
+				return m.switchView(viewState((int(m.state) + 1) % int(viewCount)))
 			case key.Matches(msg, m.keys.TabPrev):
-				return m.switchView(viewState((int(m.state) + 5) % 6))
+				return m.switchView(viewState((int(m.state) + int(viewCount) - 1) % int(viewCount)))
 			}
 			if msg.Type == tea.KeyCtrlC {
 				return m, tea.Quit
@@ -253,9 +310,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
 		case key.Matches(msg, m.keys.TabNext):
-			return m.switchView(viewState((int(m.state) + 1) % 6))
+			return m.switchView(viewState((int(m.state) + 1) % int(viewCount)))
 		case key.Matches(msg, m.keys.TabPrev):
-			return m.switchView(viewState((int(m.state) + 5) % 6))
+			return m.switchView(viewState((int(m.state) + int(viewCount) - 1) % int(viewCount)))
 		case key.Matches(msg, m.keys.Dashboard):
 			return m.switchView(dashboardView)
 		case key.Matches(msg, m.keys.Browser):
@@ -282,6 +339,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case settingsView:
 			if msg.String() == "e" {
 				return m, openConfigCmd(m.config)
+			}
+			if msg.String() == "a" {
+				m.config.Sync.AutoSync = !m.config.Sync.AutoSync
+				if err := config.Save(m.config); err != nil {
+					m.err = fmt.Errorf("save config: %w", err)
+					return m, nil
+				}
+				m.notification = fmt.Sprintf("Auto-sync: %v", m.config.Sync.AutoSync)
+				m.notifUntil = time.Now().Add(3 * time.Second)
+				return m, nil
+			}
+			if msg.String() == "E" {
+				m.promptInput.Placeholder = "Editor command (e.g. vim, code)"
+				m.promptInput.SetValue(m.config.Vault.Editor)
+				m.promptActive = true
+				m.promptAction = "editor"
+				m.promptTitle = "Change Editor"
+				m.promptInput.Focus()
+				return m, nil
 			}
 		}
 	}
@@ -447,6 +523,10 @@ type conflictDiffMsg struct {
 	err    error
 }
 
+type configReloadedMsg struct {
+	cfg *config.Config
+}
+
 func syncAllCmd(engine *sync.Engine) tea.Cmd {
 	return func() tea.Msg {
 		err := engine.SyncAll()
@@ -513,7 +593,14 @@ func openConfigCmd(cfg *config.Config) tea.Cmd {
 		ecmd.Stdin = os.Stdin
 		ecmd.Stdout = os.Stdout
 		ecmd.Stderr = os.Stderr
-		return errMsg{ecmd.Run()}
+		if err := ecmd.Run(); err != nil {
+			return errMsg{err}
+		}
+		newCfg, err := config.Load()
+		if err != nil {
+			return errMsg{err}
+		}
+		return configReloadedMsg{cfg: newCfg}
 	}
 }
 
@@ -553,4 +640,114 @@ func pluralize(n int, s string) string {
 		return fmt.Sprintf("%d %s", n, s)
 	}
 	return fmt.Sprintf("%d %ss", n, s)
+}
+
+func buildSyncStateMap(states []*storage.SyncState) map[string][]*storage.SyncState {
+	m := make(map[string][]*storage.SyncState)
+	for _, s := range states {
+		m[s.NoteID] = append(m[s.NoteID], s)
+	}
+	return m
+}
+
+func (m *model) handlePromptSubmit(action, val string) (tea.Model, tea.Cmd) {
+	switch action {
+	case "tag":
+		if val == "" {
+			return m, nil
+		}
+		note, err := m.store.GetNote(m.promptNoteID)
+		if err != nil {
+			m.err = fmt.Errorf("get note: %w", err)
+			return m, nil
+		}
+		for _, t := range note.Tags {
+			if t == val {
+				m.notification = "Tag already exists"
+				m.notifUntil = time.Now().Add(3 * time.Second)
+				return m, nil
+			}
+		}
+		note.Tags = append(note.Tags, val)
+		if err := m.store.UpdateNote(note); err != nil {
+			m.err = fmt.Errorf("update tags: %w", err)
+			return m, nil
+		}
+		m.notification = "Tag added"
+		m.notifUntil = time.Now().Add(3 * time.Second)
+		return m, m.loadNotes()
+
+	case "rename":
+		if val == "" {
+			return m, nil
+		}
+		if !strings.HasSuffix(val, ".md") {
+			val += ".md"
+		}
+		note, err := m.store.GetNote(m.promptNoteID)
+		if err != nil {
+			m.err = fmt.Errorf("get note: %w", err)
+			return m, nil
+		}
+		oldPath := filepath.Join(m.manager.NotesDir(), note.Filename)
+		newPath := filepath.Join(m.manager.NotesDir(), val)
+		if err := os.Rename(oldPath, newPath); err != nil {
+			m.err = fmt.Errorf("rename file: %w", err)
+			return m, nil
+		}
+		note.Filename = val
+		note.Title = strings.TrimSuffix(val, ".md")
+		if err := m.store.UpdateNote(note); err != nil {
+			os.Rename(newPath, oldPath)
+			m.err = fmt.Errorf("update note: %w", err)
+			return m, nil
+		}
+		m.notification = fmt.Sprintf("Renamed to %s", val)
+		m.notifUntil = time.Now().Add(3 * time.Second)
+		return m, m.loadNotes()
+
+	case "move":
+		if val == "" {
+			return m, nil
+		}
+		note, err := m.store.GetNote(m.promptNoteID)
+		if err != nil {
+			m.err = fmt.Errorf("get note: %w", err)
+			return m, nil
+		}
+		newDir := filepath.Join(m.manager.NotesDir(), val)
+		if err := os.MkdirAll(newDir, 0o755); err != nil {
+			m.err = fmt.Errorf("create folder: %w", err)
+			return m, nil
+		}
+		oldPath := filepath.Join(m.manager.NotesDir(), note.Filename)
+		newPath := filepath.Join(newDir, note.Filename)
+		if err := os.Rename(oldPath, newPath); err != nil {
+			m.err = fmt.Errorf("move file: %w", err)
+			return m, nil
+		}
+		note.Folder = val
+		if err := m.store.UpdateNote(note); err != nil {
+			m.err = fmt.Errorf("update note folder: %w", err)
+			return m, nil
+		}
+		m.notification = fmt.Sprintf("Moved to %s/", val)
+		m.notifUntil = time.Now().Add(3 * time.Second)
+		return m, m.loadNotes()
+
+	case "editor":
+		if val == "" {
+			return m, nil
+		}
+		m.config.Vault.Editor = val
+		if err := config.Save(m.config); err != nil {
+			m.err = fmt.Errorf("save config: %w", err)
+			return m, nil
+		}
+		m.notification = "Editor updated"
+		m.notifUntil = time.Now().Add(3 * time.Second)
+		return m, nil
+	}
+
+	return m, nil
 }

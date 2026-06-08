@@ -46,7 +46,7 @@ func (m *Manager) CreateNote(name, templateName string) (*storage.Note, error) {
 		return nil, fmt.Errorf("render template: %w", err)
 	}
 
-	fm, _, err := ParseFrontmatter(content)
+	fm, body, err := ParseFrontmatter(content)
 	if err != nil {
 		return nil, fmt.Errorf("parse generated frontmatter: %w", err)
 	}
@@ -59,15 +59,23 @@ func (m *Manager) CreateNote(name, templateName string) (*storage.Note, error) {
 		return nil, fmt.Errorf("write note: %w", err)
 	}
 
+	wc := WordCount(body)
+	if wc == 0 {
+		wc = WordCount(content)
+	}
 	hash := ComputeHash(content)
+	id, err := GenerateID()
+	if err != nil {
+		return nil, fmt.Errorf("generate id: %w", err)
+	}
 	note := &storage.Note{
-		ID:          GenerateID(),
+		ID:          id,
 		Filename:    name,
 		Title:       fm.Title,
 		Path:        name,
 		Content:     content,
 		ContentHash: hash,
-		WordCount:   WordCount(content),
+		WordCount:   wc,
 		CreatedAt:   time.Now(),
 		ModifiedAt:  time.Now(),
 		Tags:        fm.Tags,
@@ -95,8 +103,12 @@ func (m *Manager) OpenNote(name string) (*storage.Note, string, error) {
 				return nil, "", parseErr
 			}
 			content := BuildNoteContent(fm, body)
+			noteID, genErr := GenerateID()
+			if genErr != nil {
+				return nil, "", fmt.Errorf("generate id: %w", genErr)
+			}
 			note = &storage.Note{
-				ID:          GenerateID(),
+				ID:          noteID,
 				Filename:    name,
 				Title:       fm.Title,
 				Path:        name,
@@ -145,6 +157,10 @@ func (m *Manager) DeleteNote(name string) error {
 	return m.store.DeleteNote(note.ID)
 }
 
+func (m *Manager) ListNotesByTag(tag string) ([]*storage.Note, error) {
+	return m.store.ListNotesByTag(tag)
+}
+
 func (m *Manager) SearchNotes(query string) ([]*storage.Note, error) {
 	return m.store.SearchNotes(query)
 }
@@ -165,6 +181,9 @@ func (m *Manager) SyncFromDisk(noteID string) error {
 	fm, body, parseErr := ParseFrontmatter(content)
 	if parseErr != nil {
 		return fmt.Errorf("parse frontmatter: %w", parseErr)
+	}
+	if body == "" {
+		body = content
 	}
 
 	note.Title = fm.Title
@@ -193,9 +212,11 @@ func ComputeHash(content string) string {
 	return fmt.Sprintf("%x", h)
 }
 
-func GenerateID() string {
+func GenerateID() (string, error) {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate id: %w", err)
+	}
 	return fmt.Sprintf("%x-%x-%x-%x-%x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

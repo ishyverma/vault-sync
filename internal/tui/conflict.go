@@ -69,7 +69,7 @@ func (m model) updateConflict(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("note file missing: %w", err)
 			return m, nil
 		}
-		if err := openEditor(notePath); err != nil {
+		if err := openEditor(notePath, m.config.Vault.Editor); err != nil {
 			m.err = fmt.Errorf("open editor: %w", err)
 			return m, nil
 		}

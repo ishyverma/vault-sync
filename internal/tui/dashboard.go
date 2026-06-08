@@ -21,7 +21,7 @@ func (m model) updateDashboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		notePath := m.manager.NotesDir() + "/" + note.Filename
-		if err := openEditor(notePath); err != nil {
+		if err := openEditor(notePath, m.config.Vault.Editor); err != nil {
 			m.err = fmt.Errorf("open editor: %w", err)
 		}
 		return m, tea.Batch(m.loadNotes(), syncAllCmd(m.engine))
@@ -170,6 +170,42 @@ func (m model) dashboardView() string {
 		}
 	}
 
+	// Connection health
+	b.WriteString(TitleStyle.Render("Connections"))
+	b.WriteString("\n")
+	conns := m.engine.Connectors()
+	if len(conns) == 0 {
+		b.WriteString(SubtleStyle.Render("  No connectors configured"))
+		b.WriteString("\n")
+	} else {
+		// Known backends from config
+		backends := map[string]bool{
+			"notion":   m.config.Backends.Notion.Enabled,
+			"obsidian": m.config.Backends.Obsidian.Enabled,
+			"git":      m.config.Backends.Git.Enabled,
+		}
+		for name, enabled := range backends {
+			if !enabled {
+				b.WriteString(fmt.Sprintf("  ○ %s - not configured\n", titleCase(name)))
+				continue
+			}
+			if conn, ok := conns[name]; ok {
+				healthy, err := conn.Status()
+				if healthy {
+					b.WriteString(InfoStyle.Render(fmt.Sprintf("  ● %s - healthy", titleCase(name))))
+				} else if err != nil {
+					b.WriteString(ErrorStyle.Render(fmt.Sprintf("  ● %s - error: %v", titleCase(name), err)))
+				} else {
+					b.WriteString(ErrorStyle.Render(fmt.Sprintf("  ● %s - unhealthy", titleCase(name))))
+				}
+			} else {
+				b.WriteString(SubtleStyle.Render(fmt.Sprintf("  ○ %s - disconnected", titleCase(name))))
+			}
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n")
+
 	// Shortcuts bar
 	b.WriteString("\n")
 	b.WriteString(DividerStyle.Render(strings.Repeat("─", 50)))
@@ -190,4 +226,11 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

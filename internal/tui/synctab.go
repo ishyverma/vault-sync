@@ -29,12 +29,42 @@ func (m model) syncView() string {
 		b.WriteString("\n")
 	}
 
-	if len(m.syncStates) == 0 {
-		b.WriteString(StatusStyle.Render("No connectors configured."))
+	// Backend Status
+	b.WriteString(TitleStyle.Render("Backend Status"))
+	b.WriteString("\n")
+	b.WriteString(strings.Repeat("─", 40))
+	b.WriteString("\n")
+	conns := m.engine.Connectors()
+	if len(conns) == 0 {
+		b.WriteString(StatusStyle.Render("  No connectors configured."))
 		b.WriteString("\n")
-		b.WriteString(InfoStyle.Render("Run: vault connect obsidian <path>"))
+		b.WriteString(InfoStyle.Render("  Run: vault connect obsidian <path>"))
 	} else {
-		b.WriteString("Connector Status\n")
+		for name, conn := range conns {
+			healthy, err := conn.Status()
+			statusIcon := "○"
+			statusColor := SubtleStyle
+			statusText := "disconnected"
+			if healthy {
+				statusIcon = "✓"
+				statusColor = InfoStyle
+				statusText = "healthy"
+			} else if err != nil {
+				statusIcon = "✗"
+				statusColor = ErrorStyle
+				statusText = fmt.Sprintf("error: %v", err)
+			}
+			b.WriteString(statusColor.Render(fmt.Sprintf("  %s %s", statusIcon, titleCase(name))))
+			b.WriteString("\n")
+			b.WriteString(SubtleStyle.Render(fmt.Sprintf("    Status: %s", statusText)))
+			b.WriteString("\n\n")
+		}
+	}
+
+	// Connector Sync States
+	if len(m.syncStates) > 0 {
+		b.WriteString(TitleStyle.Render("Per-Connector Sync State"))
+		b.WriteString("\n")
 		b.WriteString(strings.Repeat("─", 40))
 		b.WriteString("\n")
 
@@ -75,11 +105,12 @@ func (m model) syncView() string {
 	if len(m.syncHistory) > 0 {
 		b.WriteString(strings.Repeat("─", 40))
 		b.WriteString("\n")
-		b.WriteString("Recent Sync History\n")
+		b.WriteString(TitleStyle.Render("Recent Sync History"))
+		b.WriteString("\n")
 		b.WriteString(strings.Repeat("─", 40))
 		b.WriteString("\n")
 		for i, h := range m.syncHistory {
-			if i >= 8 {
+			if i >= 10 {
 				break
 			}
 			statusIcon := "✓"
@@ -91,6 +122,9 @@ func (m model) syncView() string {
 			case "pending":
 				statusIcon = "⟳"
 				statusColor = StatusStyle
+			case "resolved_local", "resolved_remote":
+				statusIcon = "→"
+				statusColor = StatusStyle
 			}
 			syncAt := "?"
 			if !h.SyncedAt.IsZero() {
@@ -100,11 +134,12 @@ func (m model) syncView() string {
 			if len(shortID) > 8 {
 				shortID = shortID[:8]
 			}
-			b.WriteString(fmt.Sprintf("  %s %s  %s → %s\n",
+			b.WriteString(fmt.Sprintf("  %s %s  %s → %s (%s)\n",
 				statusColor.Render(statusIcon),
 				SubtleStyle.Render(syncAt),
 				shortID,
 				h.Backend,
+				h.Status,
 			))
 		}
 	}

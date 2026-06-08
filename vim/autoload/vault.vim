@@ -48,5 +48,5 @@ endfunction
 " Auto-sync on write
 augroup vault_sync
   autocmd!
-  execute 'autocmd BufWritePost ' . s:notes_dir . '/*.md call vault#push(expand(''%:p''))'
+  execute 'autocmd BufWritePost ' . s:notes_dir . '/*.md call vault#push(expand("<afile>:p"))'
 augroup END

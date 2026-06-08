@@ -23,6 +23,8 @@ type keyMap struct {
 	SortToggle     key.Binding
 	ResolveLocal   key.Binding
 	ResolveRemote  key.Binding
+	PinToggle      key.Binding
+	PinFilter      key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
@@ -60,5 +62,7 @@ func defaultKeyMap() keyMap {
 		SortToggle:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		ResolveLocal:  key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "keep local")),
 		ResolveRemote: key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "keep remote")),
+		PinToggle:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "toggle pin")),
+		PinFilter:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "show pinned only")),
 	}
 }

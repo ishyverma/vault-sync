@@ -194,6 +194,22 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
+	// Migrate legacy token from config to credentials
+	if cfg.Backends.Notion.Token != "" {
+		creds, credsErr := LoadCredentials()
+		if credsErr == nil && creds.NotionToken == "" {
+			creds.NotionToken = cfg.Backends.Notion.Token
+			SaveCredentials(creds)
+		}
+		cfg.Backends.Notion.Token = ""
+	}
+
+	// Load token from encrypted credentials
+	creds, credsErr := LoadCredentials()
+	if credsErr == nil && creds.NotionToken != "" {
+		cfg.Backends.Notion.Token = creds.NotionToken
+	}
+
 	return &cfg, nil
 }
 
@@ -251,7 +267,6 @@ func structToMap(cfg *Config) map[string]interface{} {
 		"backends": map[string]interface{}{
 			"notion": map[string]interface{}{
 				"enabled":        cfg.Backends.Notion.Enabled,
-				"token":          cfg.Backends.Notion.Token,
 				"workspace_id":   cfg.Backends.Notion.WorkspaceID,
 				"target_page_id": cfg.Backends.Notion.TargetPageID,
 				"database_id":    cfg.Backends.Notion.DatabaseID,

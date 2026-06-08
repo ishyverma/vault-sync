@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ishyverma/vault-sync/internal/connectors"
 	"github.com/ishyverma/vault-sync/internal/storage"
 )
 
@@ -16,6 +17,8 @@ type Connector struct {
 	wikilinks bool
 	targetDir string
 }
+
+var _ connectors.Connector = (*Connector)(nil)
 
 func NewConnector(vaultPath, subfolder, notesDir string, wikilinks bool) *Connector {
 	expanded := expandHome(vaultPath)

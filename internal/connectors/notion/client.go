@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -18,16 +19,16 @@ const (
 )
 
 type Client struct {
-	token   string
-	http    *http.Client
-	ratelimit chan time.Time
+	token      string
+	http       *http.Client
+	mu         sync.Mutex
+	timestamps []time.Time
 }
 
 func NewClient(token string) *Client {
 	return &Client{
 		token: token,
 		http:  &http.Client{Timeout: 30 * time.Second},
-		ratelimit: make(chan time.Time, rateLimit),
 	}
 }
 
@@ -105,16 +106,31 @@ func (c *Client) do(method, path string, body, out interface{}) error {
 }
 
 func (c *Client) waitRateLimit() {
-	select {
-	case c.ratelimit <- time.Now():
-	default:
-		oldest := <-c.ratelimit
-		elapsed := time.Since(oldest)
-		if elapsed < rateWindow {
-			time.Sleep(rateWindow - elapsed)
-		}
-		c.ratelimit <- time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rateWindow)
+	for len(c.timestamps) > 0 && c.timestamps[0].Before(cutoff) {
+		c.timestamps = c.timestamps[1:]
 	}
+
+	if len(c.timestamps) >= rateLimit {
+		elapsed := now.Sub(c.timestamps[0])
+		if elapsed < rateWindow {
+			c.mu.Unlock()
+			time.Sleep(rateWindow - elapsed)
+			c.mu.Lock()
+			now = time.Now()
+			cutoff = now.Add(-rateWindow)
+			for len(c.timestamps) > 0 && c.timestamps[0].Before(cutoff) {
+				c.timestamps = c.timestamps[1:]
+			}
+		}
+		c.timestamps = c.timestamps[1:]
+	}
+
+	c.timestamps = append(c.timestamps, now)
 }
 
 func (c *Client) CreatePage(req *CreatePageRequest) (*Page, error) {
@@ -239,12 +255,21 @@ func (c *Client) GetDatabase(databaseID string) (*Database, error) {
 }
 
 func (c *Client) QueryDatabase(databaseID string, req *QueryDatabaseRequest) (*QueryDatabaseResponse, error) {
-	var resp QueryDatabaseResponse
-	err := c.do("POST", "/databases/"+databaseID+"/query", req, &resp)
-	if err != nil {
-		return nil, err
+	var allResults []Page
+	cursor := ""
+	for {
+		req.StartCursor = cursor
+		var resp QueryDatabaseResponse
+		err := c.do("POST", "/databases/"+databaseID+"/query", req, &resp)
+		if err != nil {
+			return nil, err
+		}
+		allResults = append(allResults, resp.Results...)
+		if !resp.HasMore {
+			return &QueryDatabaseResponse{Results: allResults}, nil
+		}
+		cursor = resp.NextCursor
 	}
-	return &resp, nil
 }
 
 func (c *Client) Status() error {

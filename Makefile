@@ -34,6 +34,7 @@ lint:
 
 install:
 	$(GO) install ./cmd/vault
+	$(GO) install ./cmd/vaultd
 
 tidy:
 	$(GO) mod tidy

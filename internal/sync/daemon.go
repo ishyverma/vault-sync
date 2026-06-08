@@ -272,6 +272,9 @@ func (d *Daemon) importFromObsidian(filename string) {
 		log.Printf("import %s: parse error: %v", filename, parseErr)
 		return
 	}
+	if body == "" {
+		body = content
+	}
 
 	h := sha256.Sum256([]byte(content + filename))
 	noteID := fmt.Sprintf("%x", h)

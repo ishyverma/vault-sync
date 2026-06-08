@@ -17,6 +17,7 @@ type Store interface {
 	UpdateNote(note *Note) error
 	DeleteNote(id string) error
 	ListNotes() ([]*Note, error)
+	ListAllNotes() ([]*Note, error)
 	ListNotesByTag(tag string) ([]*Note, error)
 	SearchNotes(query string) ([]*Note, error)
 	Close() error
@@ -131,7 +132,7 @@ func (s *NoteStore) migrate() error {
 		return err
 	}
 
-	_, ftsErr := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts4(title, content)`)
+	_, ftsErr := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id UNINDEXED, title, content, tokenize='unicode61')`)
 	if ftsErr != nil {
 		s.hasFTS = false
 	} else {
@@ -311,6 +312,19 @@ func (s *NoteStore) DeleteNote(id string) error {
 	return tx.Commit()
 }
 
+func (s *NoteStore) ListAllNotes() ([]*Note, error) {
+	rows, err := s.db.Query(`
+		SELECT id, filename, COALESCE(title,''), path, COALESCE(folder,''), COALESCE(content_hash,''),
+		       COALESCE(word_count,0), created_at, modified_at, COALESCE(archived,0), COALESCE(pinned,0)
+		FROM notes ORDER BY modified_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanNotes(rows)
+}
+
 func (s *NoteStore) ListNotes() ([]*Note, error) {
 	rows, err := s.db.Query(`
 		SELECT id, filename, COALESCE(title,''), path, COALESCE(folder,''), COALESCE(content_hash,''),
@@ -350,7 +364,7 @@ func (s *NoteStore) SearchNotes(query string) ([]*Note, error) {
 		SELECT n.id, n.filename, COALESCE(n.title,''), n.path, COALESCE(n.folder,''), COALESCE(n.content_hash,''),
 		       COALESCE(n.word_count,0), n.created_at, n.modified_at, COALESCE(n.archived,0), COALESCE(n.pinned,0)
 		FROM notes_fts f
-		INNER JOIN notes n ON n.rowid = f.docid
+		INNER JOIN notes n ON n.rowid = f.rowid
 		WHERE notes_fts MATCH ? AND n.archived = 0
 		ORDER BY n.modified_at DESC
 		LIMIT 50`, query)
@@ -449,8 +463,8 @@ func (s *NoteStore) insertNoteFTS(tx *sql.Tx, note *Note) error {
 	if bodyText == "" {
 		bodyText = note.Title
 	}
-	_, err = tx.Exec(`INSERT INTO notes_fts(docid, title, content) VALUES (?, ?, ?)`,
-		rowid, note.Title, bodyText)
+	_, err = tx.Exec(`INSERT INTO notes_fts(rowid, id, title, content) VALUES (?, ?, ?, ?)`,
+		rowid, note.ID, note.Title, bodyText)
 	return err
 }
 
@@ -466,6 +480,6 @@ func (s *NoteStore) deleteNoteFTS(tx *sql.Tx, id string) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`DELETE FROM notes_fts WHERE docid = ?`, rowid)
+	_, err = tx.Exec(`DELETE FROM notes_fts WHERE rowid = ?`, rowid)
 	return err
 }

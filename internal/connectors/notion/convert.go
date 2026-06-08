@@ -657,10 +657,3 @@ func getFileCaption(fb *FileBlock) []RichText {
 	return fb.Caption
 }
 
-func MarkdownToBlocksRaw(markdown string) []Block {
-	blocks, err := MarkdownToBlocks(markdown)
-	if err != nil {
-		return nil
-	}
-	return blocks
-}

@@ -3,8 +3,6 @@ package notion
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/ishyverma/vault-sync/internal/connectors"
@@ -238,9 +236,11 @@ func (c *Connector) findDatabaseEntry(db *Database, title string) (string, error
 func (c *Connector) buildDBProperties(db *Database, fm core.Frontmatter, title string) map[string]Property {
 	props := make(map[string]Property, len(db.Properties))
 
+	hasTitle := false
 	for name, propDef := range db.Properties {
 		switch propDef.Type {
 		case "title":
+			hasTitle = true
 			if title != "" {
 				props[name] = Property{
 					Type:  "title",
@@ -248,8 +248,7 @@ func (c *Connector) buildDBProperties(db *Database, fm core.Frontmatter, title s
 				}
 			}
 		case "multi_select":
-			lower := strings.ToLower(name)
-			if (lower == "tags" || lower == "tag") && len(fm.Tags) > 0 {
+			if len(fm.Tags) > 0 {
 				ms := make([]Select, len(fm.Tags))
 				for i, tag := range fm.Tags {
 					ms[i] = Select{Name: tag}
@@ -260,14 +259,14 @@ func (c *Connector) buildDBProperties(db *Database, fm core.Frontmatter, title s
 				}
 			}
 		case "date":
-			if strings.ToLower(name) == "date" && fm.Date != "" {
+			if fm.Date != "" {
 				props[name] = Property{
 					Type: "date",
 					Date: &DateValue{Start: fm.Date},
 				}
 			}
 		case "rich_text":
-			if strings.ToLower(name) == "description" && title != "" {
+			if title != "" && !hasTitle {
 				props[name] = Property{
 					Type:     "rich_text",
 					RichText: []RichText{{Type: "text", Text: &TextContent{Content: title}}},
@@ -392,15 +391,6 @@ func buildPageProperties(title string) map[string]Property {
 			Title: []RichText{{Type: "text", Text: &TextContent{Content: title}}},
 		},
 	}
-}
-
-func frontmatterFromDisk(notesDir, filename string) (string, error) {
-	path := filepath.Join(notesDir, filename)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }
 
 func propertiesToFrontmatter(props map[string]Property) core.Frontmatter {

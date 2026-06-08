@@ -58,7 +58,6 @@ Example:
 		}
 
 		cfg.Backends.Notion.Enabled = true
-		cfg.Backends.Notion.Token = token
 		if targetPageID != "" {
 			cfg.Backends.Notion.TargetPageID = targetPageID
 		}
@@ -68,6 +67,10 @@ Example:
 
 		if err := config.Save(cfg); err != nil {
 			return fmt.Errorf("save config: %w", err)
+		}
+
+		if err := config.SaveCredentials(&config.Credentials{NotionToken: token}); err != nil {
+			return fmt.Errorf("save credentials: %w", err)
 		}
 
 		fmt.Println("✓ Connected to Notion")

@@ -8,11 +8,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yuin/goldmark"
 
 	"github.com/ishyverma/vault-sync/internal/core"
 	"github.com/ishyverma/vault-sync/internal/storage"
@@ -76,7 +78,7 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.previewNote != nil {
 			notePath := m.manager.NotesDir() + "/" + m.previewNote.Filename
 			m.manager.SyncFromDisk(m.previewNote.ID)
-			if err := openEditor(notePath); err != nil {
+			if err := openEditor(notePath, m.config.Vault.Editor); err != nil {
 				m.err = fmt.Errorf("open editor: %w", err)
 			}
 			return m, m.loadNotes()
@@ -90,13 +92,91 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		m.browserSort = (m.browserSort + 1) % 3
 		return m, nil
+	case "p":
+		if m.previewNote != nil {
+			m.previewNote.Pinned = !m.previewNote.Pinned
+			if err := m.store.UpdateNote(m.previewNote); err != nil {
+				m.err = fmt.Errorf("toggle pin: %w", err)
+			}
+			return m, m.loadNotes()
+		}
+	case "P":
+		m.showPinnedOnly = !m.showPinnedOnly
+		return m, nil
+	case "d":
+		if m.previewNote != nil {
+			name := m.previewNote.Filename
+			if err := m.manager.DeleteNote(name); err != nil {
+				m.err = fmt.Errorf("delete note: %w", err)
+				return m, nil
+			}
+			m.previewNote = nil
+			m.previewContent = ""
+			m.notification = fmt.Sprintf("Deleted %s", name)
+			m.notifUntil = time.Now().Add(3 * time.Second)
+			return m, m.loadNotes()
+		}
+	case "t":
+		if m.previewNote != nil {
+			m.promptInput.Placeholder = "Enter tag name..."
+			m.promptInput.SetValue("")
+			m.promptActive = true
+			m.promptAction = "tag"
+			m.promptNoteID = m.previewNote.ID
+			m.promptTitle = "Add tag"
+			m.promptInput.Focus()
+			return m, nil
+		}
+	case "a":
+		if m.previewNote != nil {
+			name := m.previewNote.Filename
+			m.previewNote.Archived = true
+			if err := m.store.UpdateNote(m.previewNote); err != nil {
+				m.err = fmt.Errorf("archive note: %w", err)
+				return m, nil
+			}
+			m.previewNote = nil
+			m.previewContent = ""
+			m.notification = fmt.Sprintf("Archived %s", name)
+			m.notifUntil = time.Now().Add(3 * time.Second)
+			return m, m.loadNotes()
+		}
+	case "R":
+		if m.previewNote != nil {
+			oldName := strings.TrimSuffix(m.previewNote.Filename, ".md")
+			m.promptInput.Placeholder = "New name..."
+			m.promptInput.SetValue(oldName)
+			m.promptActive = true
+			m.promptAction = "rename"
+			m.promptNoteID = m.previewNote.ID
+			m.promptTitle = "Rename note"
+			m.promptInput.Focus()
+			return m, nil
+		}
+	case "e":
+		if m.previewNote != nil {
+			return m, m.exportNote(m.previewNote)
+		}
+	case "m":
+		if m.previewNote != nil {
+			m.promptInput.Placeholder = "Folder name..."
+			m.promptInput.SetValue("")
+			m.promptActive = true
+			m.promptAction = "move"
+			m.promptNoteID = m.previewNote.ID
+			m.promptTitle = "Move note"
+			m.promptInput.Focus()
+			return m, nil
+		}
 	}
 
 	return m, cmd
 }
 
-func openEditor(path string) error {
-	editor := os.Getenv("EDITOR")
+func openEditor(path, editor string) error {
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
 	if editor == "" {
 		editor = "vim"
 	}
@@ -144,6 +224,11 @@ func (m model) renderNotePreview(path string) string {
 func (m model) browserView() string {
 	var b strings.Builder
 
+	if m.promptActive {
+		b.WriteString(m.renderBrowserPrompt())
+		return b.String()
+	}
+
 	sortLabels := []string{"name", "modified", "words"}
 	b.WriteString(TitleStyle.Render(fmt.Sprintf("Note Browser — %d notes  sort: %s", len(m.notes), sortLabels[m.browserSort])))
 	b.WriteString("\n")
@@ -159,7 +244,7 @@ func (m model) browserView() string {
 	b.WriteString(TableStyle.Render(m.browserTable.View()))
 	b.WriteString("\n")
 
-	b.WriteString(StatusStyle.Render("[s] Sort  [/] Filter  [o] Open  [r] Refresh"))
+	b.WriteString(StatusStyle.Render("[s] Sort  [/] Filter  [o] Open  [r] Refresh  [d] Delete  [t] Tag  [a] Archive  [R] Rename  [e] Export  [m] Move"))
 	b.WriteString("\n")
 
 	if m.previewNote != nil {
@@ -178,6 +263,9 @@ func (m model) buildTableRows() []table.Row {
 	var rows []table.Row
 	filter := strings.ToLower(m.browserFilter.Value())
 	for _, n := range m.notes {
+		if m.showPinnedOnly && !n.Pinned {
+			continue
+		}
 		if filter != "" {
 			name := strings.ToLower(n.Filename)
 			title := strings.ToLower(n.Title)
@@ -189,11 +277,49 @@ func (m model) buildTableRows() []table.Row {
 		if !n.ModifiedAt.IsZero() {
 			modified = n.ModifiedAt.Format("2006-01-02")
 		}
+
+		name := n.Filename
+		if n.Pinned {
+			name = "📌 " + name
+		}
+
+		tagsStr := ""
+		if len(n.Tags) > 0 {
+			limit := 3
+			if len(n.Tags) < limit {
+				limit = len(n.Tags)
+			}
+			tagsStr = strings.Join(n.Tags[:limit], ",")
+		}
+
+		syncStr := "-"
+		if states, ok := m.syncStateMap[n.ID]; ok {
+			allSynced := true
+			hasAny := false
+			for _, s := range states {
+				hasAny = true
+				if s.Status != "synced" {
+					allSynced = false
+					syncStr = s.Status
+					break
+				}
+			}
+			if hasAny && allSynced {
+				syncStr = "synced"
+			} else if !hasAny {
+				syncStr = "-"
+			}
+		} else {
+			syncStr = "local"
+		}
+
 		rows = append(rows, table.Row{
-			n.Filename,
+			name,
 			truncate(n.Title, 24),
 			fmt.Sprintf("%d", n.WordCount),
 			modified,
+			truncate(tagsStr, 13),
+			syncStr,
 		})
 	}
 
@@ -216,4 +342,57 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+func (m *model) exportNote(note *storage.Note) tea.Cmd {
+	return func() tea.Msg {
+		notePath := filepath.Join(m.manager.NotesDir(), note.Filename)
+		data, err := os.ReadFile(notePath)
+		if err != nil {
+			return errMsg{fmt.Errorf("read note: %w", err)}
+		}
+
+		htmlName := strings.TrimSuffix(note.Filename, ".md") + ".html"
+		htmlPath := filepath.Join(m.manager.NotesDir(), htmlName)
+
+		var body strings.Builder
+		body.WriteString("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n")
+		body.WriteString(fmt.Sprintf("<title>%s</title>\n", note.Title))
+		body.WriteString("<style>body{max-width:800px;margin:40px auto;padding:0 20px;font-family:system-ui,-apple-system,sans-serif;line-height:1.6}pre{background:#f5f5f5;padding:1em;overflow-x:auto}code{background:#f0f0f0;padding:.2em .4em}</style>\n")
+		body.WriteString("</head>\n<body>\n")
+
+		var buf strings.Builder
+		md := goldmark.New()
+		if err := md.Convert(data, &buf); err != nil {
+			body.WriteString("<pre>" + string(data) + "</pre>\n")
+		} else {
+			body.WriteString(buf.String())
+		}
+
+		body.WriteString("</body>\n</html>\n")
+
+		if err := os.WriteFile(htmlPath, []byte(body.String()), 0o644); err != nil {
+			return errMsg{fmt.Errorf("write html: %w", err)}
+		}
+
+		return exportDoneMsg{name: htmlName}
+	}
+}
+
+type exportDoneMsg struct {
+	name string
+}
+
+func (m model) renderBrowserPrompt() string {
+	if !m.promptActive {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(TitleStyle.Render(m.promptTitle))
+	b.WriteString("\n")
+	b.WriteString(m.promptInput.View())
+	b.WriteString("\n")
+	b.WriteString(StatusStyle.Render("[enter] Confirm  [esc] Cancel"))
+	return b.String()
 }

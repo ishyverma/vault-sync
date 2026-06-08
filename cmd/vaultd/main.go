@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.1.0-dev"
+var version = "0.1.0"
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
@@ -69,6 +70,7 @@ Press Ctrl+C to stop.`,
 
 		engine := sync.NewEngine(store, notesDir)
 		engine.SetRetryLimit(cfg.Sync.QueueRetryLimit)
+		engine.SetConflictStrategy(cfg.Sync.ConflictStrategy)
 		engine.SetHooks(cfg.Hooks.PreSync, cfg.Hooks.PostSync, cfg.Hooks.OnConflict)
 
 		if cfg.Backends.Git.Enabled && cfg.Backends.Git.RepoPath != "" {
@@ -76,6 +78,7 @@ Press Ctrl+C to stop.`,
 				cfg.Backends.Git.RepoPath,
 				cfg.Backends.Git.CommitMessage,
 				cfg.Backends.Git.Remote,
+				cfg.Backends.Git.AutoCommit,
 			)
 			engine.RegisterConnector("git", gc)
 		}
@@ -180,25 +183,71 @@ var statusCmd = &cobra.Command{
 	},
 }
 
+var installCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install vaultd as a system service",
+	Long: `Installs vaultd as a launchd (macOS) or systemd (Linux) user service.
+This ensures vaultd starts automatically on login.
+
+Examples:
+  vaultd install`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		scriptPath := findSetupScript()
+		if scriptPath == "" {
+			return fmt.Errorf("setup-service.sh not found (install vaultsync first)")
+		}
+		script := exec.Command("/bin/bash", scriptPath)
+		script.Stdin = os.Stdin
+		script.Stdout = os.Stdout
+		script.Stderr = os.Stderr
+		if err := script.Run(); err != nil {
+			return fmt.Errorf("install service: %w", err)
+		}
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.SetVersionTemplate("VaultSync Daemon {{.Version}}\n")
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(installCmd)
 
 	startCmd.Flags().IntP("interval", "i", 0, "Poll interval in seconds (default: from config)")
 }
 
 func resolveVaultDir(cfg *config.Config) string {
-	if cfg.Vault.Path != "" {
-		return expandPath(filepath.Dir(cfg.Vault.Path))
+	path := cfg.Vault.Path
+	if path == "" {
+		dir, err := config.VaultDir()
+		if err != nil {
+			home, _ := os.UserHomeDir()
+			return filepath.Join(home, ".vault")
+		}
+		return dir
 	}
-	dir, err := config.VaultDir()
-	if err != nil {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".vault")
+	expanded := expandPath(path)
+	if strings.HasSuffix(expanded, "/notes") || strings.HasSuffix(expanded, "\\notes") {
+		return filepath.Dir(expanded)
 	}
-	return dir
+	return expanded
+}
+
+func findSetupScript() string {
+	paths := []string{
+		"../scripts/setup-service.sh",
+		"/usr/local/share/vaultsync/scripts/setup-service.sh",
+		"/opt/vaultsync/scripts/setup-service.sh",
+	}
+	for _, p := range paths {
+		abs, _ := filepath.Abs(p)
+		if _, err := os.Stat(abs); err == nil {
+			return abs
+		}
+	}
+	return ""
 }
 
 func expandPath(path string) string {

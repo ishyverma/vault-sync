@@ -24,14 +24,18 @@ Supported formats: html, pdf
 Examples:
   vault export html my-note
   vault export pdf my-note
-  vault export html my-note --output /tmp/note.html`,
-	Args: cobra.ExactArgs(2),
+  vault export html my-note --output /tmp/note.html
+  vault export all html --output ./exports`,
+	Args: cobra.RangeArgs(2, 3),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if args[0] == "all" {
+			return exportAll(cmd, args)
+		}
 		format := args[0]
 		noteName := args[1]
 
 		if format != "html" && format != "pdf" {
-			return fmt.Errorf("unsupported format: %s (use html or pdf)", format)
+			return fmt.Errorf("unsupported format: %s (use html, pdf, or all)", format)
 		}
 
 		mgr, err := newManager()
@@ -61,6 +65,64 @@ Examples:
 		}
 		return nil
 	},
+}
+
+func exportAll(cmd *cobra.Command, args []string) error {
+	format := args[1]
+	if format != "html" && format != "pdf" {
+		return fmt.Errorf("unsupported format: %s (use html or pdf)", format)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "" {
+		output = "exports"
+	}
+
+	if err := os.MkdirAll(output, 0o755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
+
+	mgr, err := newManager()
+	if err != nil {
+		return fmt.Errorf("open vault: %w", err)
+	}
+
+	notes, err := mgr.ListNotes()
+	if err != nil {
+		return fmt.Errorf("list notes: %w", err)
+	}
+
+	if len(notes) == 0 {
+		fmt.Println("No notes to export")
+		return nil
+	}
+
+	var exported int
+	for _, n := range notes {
+		content, readErr := os.ReadFile(filepath.Join(mgr.NotesDir(), n.Filename))
+		if readErr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "⚠  %s: %v\n", n.Filename, readErr)
+			continue
+		}
+
+		outPath := filepath.Join(output, strings.TrimSuffix(n.Filename, ".md")+"."+format)
+		switch format {
+		case "html":
+			if err := exportHTML(mgr.NotesDir(), n.Filename, string(content), outPath); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠  %s: %v\n", n.Filename, err)
+				continue
+			}
+		case "pdf":
+			if err := exportPDF(mgr.NotesDir(), n.Filename, string(content), outPath); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "⚠  %s: %v\n", n.Filename, err)
+				continue
+			}
+		}
+		exported++
+	}
+
+	fmt.Printf("✓ Exported %d %s file(s) to %s\n", exported, format, output)
+	return nil
 }
 
 func exportHTML(notesDir, filename, content, outputPath string) error {
@@ -109,11 +171,16 @@ func exportHTML(notesDir, filename, content, outputPath string) error {
 }
 
 func exportPDF(notesDir, filename, content, outputPath string) error {
-	htmlPath := filepath.Join(notesDir, strings.TrimSuffix(filename, ".md")+".html")
+	tmpDir, err := os.MkdirTemp("", "vault-export-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	htmlPath := filepath.Join(tmpDir, strings.TrimSuffix(filename, ".md")+".html")
 	if err := exportHTML(notesDir, filename, content, htmlPath); err != nil {
 		return err
 	}
-	defer os.Remove(htmlPath)
 
 	if outputPath == "" {
 		outputPath = filepath.Join(notesDir, strings.TrimSuffix(filename, ".md")+".pdf")

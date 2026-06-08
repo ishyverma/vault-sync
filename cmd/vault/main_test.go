@@ -20,8 +20,8 @@ func TestRootCommand_Version(t *testing.T) {
 	if !strings.Contains(output, "VaultSync") {
 		t.Errorf("expected version output to contain 'VaultSync', got: %s", output)
 	}
-	if !strings.Contains(output, "0.1.0-dev") {
-		t.Errorf("expected version output to contain '0.1.0-dev', got: %s", output)
+	if !strings.Contains(output, "0.1.0") {
+		t.Errorf("expected version output to contain '0.1.0', got: %s", output)
 	}
 }
 

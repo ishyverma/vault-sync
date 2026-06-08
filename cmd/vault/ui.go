@@ -16,7 +16,8 @@ import (
 )
 
 var uiCmd = &cobra.Command{
-	Use:   "ui",
+	Use:     "ui",
+	Aliases: []string{"tui"},
 	Short: "Launch the terminal dashboard",
 	Long: `Opens the VaultSync TUI dashboard with:
   - Dashboard overview (stats, recent notes, sync status)
@@ -49,6 +50,7 @@ func runTUI() error {
 
 	engine := sync.NewEngine(store, notesDir)
 	engine.SetRetryLimit(cfg.Sync.QueueRetryLimit)
+	engine.SetConflictStrategy(cfg.Sync.ConflictStrategy)
 	engine.SetHooks(cfg.Hooks.PreSync, cfg.Hooks.PostSync, cfg.Hooks.OnConflict)
 	if cfg.Backends.Obsidian.Enabled && cfg.Backends.Obsidian.VaultPath != "" {
 		obs := obsidian.NewConnector(
@@ -74,6 +76,7 @@ func runTUI() error {
 			cfg.Backends.Git.RepoPath,
 			cfg.Backends.Git.CommitMessage,
 			cfg.Backends.Git.Remote,
+			cfg.Backends.Git.AutoCommit,
 		)
 		engine.RegisterConnector("git", gc)
 	}

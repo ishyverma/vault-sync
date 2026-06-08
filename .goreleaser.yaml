@@ -107,10 +107,10 @@ release:
     ### Installation
 
     ```sh
-    curl -sf https://vaultsync.dev/install | sh
+    brew install ishyverma/tap/vault-sync
     ```
 
-    Or via Homebrew:
+    Or via Go install:
     ```sh
     brew install ishyverma/tap/vault-sync
     ```

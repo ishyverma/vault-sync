@@ -8,6 +8,15 @@ import (
 func (m model) settingsView() string {
 	var b strings.Builder
 
+	if m.promptActive && m.promptAction == "editor" {
+		b.WriteString(TitleStyle.Render("Change Editor"))
+		b.WriteString("\n")
+		b.WriteString(m.promptInput.View())
+		b.WriteString("\n")
+		b.WriteString(StatusStyle.Render("[enter] Confirm  [esc] Cancel"))
+		return b.String()
+	}
+
 	b.WriteString(TitleStyle.Render("Settings"))
 	b.WriteString("\n")
 
@@ -84,7 +93,7 @@ func (m model) settingsView() string {
 
 	b.WriteString(DividerStyle.Render(strings.Repeat("─", 40)))
 	b.WriteString("\n")
-	b.WriteString(InfoStyle.Render("Edit config: e"))
+	b.WriteString(InfoStyle.Render("[a] Toggle auto-sync  [E] Change editor  [e] Edit config file"))
 	b.WriteString("\n")
 
 	return b.String()

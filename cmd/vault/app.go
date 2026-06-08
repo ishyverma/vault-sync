@@ -48,6 +48,7 @@ func newSyncEngine() (*sync.Engine, error) {
 
 	engine := sync.NewEngine(store, notesDir)
 	engine.SetRetryLimit(cfg.Sync.QueueRetryLimit)
+	engine.SetConflictStrategy(cfg.Sync.ConflictStrategy)
 	engine.SetHooks(cfg.Hooks.PreSync, cfg.Hooks.PostSync, cfg.Hooks.OnConflict)
 
 	if cfg.Backends.Obsidian.Enabled && cfg.Backends.Obsidian.VaultPath != "" {
@@ -75,6 +76,7 @@ func newSyncEngine() (*sync.Engine, error) {
 			cfg.Backends.Git.RepoPath,
 			cfg.Backends.Git.CommitMessage,
 			cfg.Backends.Git.Remote,
+			cfg.Backends.Git.AutoCommit,
 		)
 		engine.RegisterConnector("git", gc)
 	}
@@ -83,15 +85,20 @@ func newSyncEngine() (*sync.Engine, error) {
 }
 
 func resolveVaultDir(cfg *config.Config) string {
-	if cfg.Vault.Path != "" {
-		return expandPath(filepath.Dir(cfg.Vault.Path))
+	path := cfg.Vault.Path
+	if path == "" {
+		dir, err := config.VaultDir()
+		if err != nil {
+			home, _ := os.UserHomeDir()
+			return filepath.Join(home, ".vault")
+		}
+		return dir
 	}
-	dir, err := config.VaultDir()
-	if err != nil {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".vault")
+	expanded := expandPath(path)
+	if strings.HasSuffix(expanded, "/notes") || strings.HasSuffix(expanded, "\\notes") {
+		return filepath.Dir(expanded)
 	}
-	return dir
+	return expanded
 }
 
 func expandPath(path string) string {

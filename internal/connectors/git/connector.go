@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ishyverma/vault-sync/internal/connectors"
 	"github.com/ishyverma/vault-sync/internal/storage"
 )
 
@@ -17,10 +18,12 @@ type Connector struct {
 	remote        string
 }
 
-func NewConnector(repoPath, commitMessage, remote string) *Connector {
+var _ connectors.Connector = (*Connector)(nil)
+
+func NewConnector(repoPath, commitMessage, remote string, autoCommit bool) *Connector {
 	return &Connector{
 		repoPath:      repoPath,
-		autoCommit:    true,
+		autoCommit:    autoCommit,
 		commitMessage: commitMessage,
 		remote:        remote,
 	}
@@ -50,7 +53,7 @@ func (c *Connector) Status() (bool, error) {
 
 func (c *Connector) Push(note *storage.Note, content string, remoteID string) (string, error) {
 	if !c.autoCommit {
-		return "", nil
+		return filepath.Join("notes", note.Filename), nil
 	}
 	if err := c.Connect(); err != nil {
 		return "", err
@@ -83,11 +86,34 @@ func (c *Connector) Push(note *storage.Note, content string, remoteID string) (s
 		}
 	}
 
-	return "", nil
+	return relPath, nil
 }
 
 func (c *Connector) Pull(remoteID string) (string, error) {
-	return "", fmt.Errorf("git connector does not support pull")
+	if c.remote == "" {
+		return "", nil
+	}
+	if err := c.Connect(); err != nil {
+		return "", err
+	}
+
+	relPath := remoteID
+	if relPath == "" {
+		return "", nil
+	}
+
+	branch := c.currentBranch()
+	if err := c.exec("pull", c.remote, branch); err != nil {
+		return "", fmt.Errorf("git pull: %w", err)
+	}
+
+	absPath := filepath.Join(c.repoPath, relPath)
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("read pulled file: %w", err)
+	}
+
+	return string(data), nil
 }
 
 func (c *Connector) Delete(remoteID string) error {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ishyverma/vault-sync/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -24,13 +25,27 @@ Examples:
 
 		tag, _ := cmd.Flags().GetString("tag")
 		asJSON, _ := cmd.Flags().GetBool("json")
+		showArchived, _ := cmd.Flags().GetBool("archived")
 
-		var notes []NoteRow
-		if tag != "" {
-			allNotes, err := mgr.ListNotes()
+		var allNotes []*storage.Note
+		if showArchived {
+			store, sErr := newStore()
+			if sErr != nil {
+				return fmt.Errorf("open store: %w", sErr)
+			}
+			allNotes, sErr = store.ListAllNotes()
+			if sErr != nil {
+				return fmt.Errorf("list all notes: %w", sErr)
+			}
+		} else {
+			allNotes, err = mgr.ListNotes()
 			if err != nil {
 				return fmt.Errorf("list notes: %w", err)
 			}
+		}
+
+		var notes []NoteRow
+		if tag != "" {
 			for _, n := range allNotes {
 				for _, t := range n.Tags {
 					if t == tag {
@@ -40,10 +55,6 @@ Examples:
 				}
 			}
 		} else {
-			allNotes, err := mgr.ListNotes()
-			if err != nil {
-				return fmt.Errorf("list notes: %w", err)
-			}
 			for _, n := range allNotes {
 				notes = append(notes, NoteRow{n.Filename, n.Title, formatTags(n.Tags), n.WordCount, n.CreatedAt.Format("2006-01-02")})
 			}
@@ -101,4 +112,5 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().StringP("tag", "t", "", "Filter notes by tag")
 	listCmd.Flags().Bool("json", false, "Output as JSON")
+	listCmd.Flags().Bool("archived", false, "Show archived notes too")
 }

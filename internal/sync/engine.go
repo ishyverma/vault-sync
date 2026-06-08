@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -47,14 +48,15 @@ func (s Status) String() string {
 }
 
 type Engine struct {
-	mu            sync.RWMutex
-	store         *storage.NoteStore
-	connectors    map[string]connectors.Connector
-	notesDir      string
-	retryLimit    int
-	preSyncHook   string
-	postSyncHook  string
-	onConflictHook string
+	mu               sync.RWMutex
+	store            *storage.NoteStore
+	connectors       map[string]connectors.Connector
+	notesDir         string
+	retryLimit       int
+	conflictStrategy string
+	preSyncHook      string
+	postSyncHook     string
+	onConflictHook   string
 }
 
 func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
@@ -70,20 +72,37 @@ func (e *Engine) SetRetryLimit(limit int) {
 	e.retryLimit = limit
 }
 
+func (e *Engine) SetConflictStrategy(strategy string) {
+	e.conflictStrategy = strategy
+}
+
 func (e *Engine) SetHooks(preSync, postSync, onConflict string) {
 	e.preSyncHook = preSync
 	e.postSyncHook = postSync
 	e.onConflictHook = onConflict
 }
 
-func (e *Engine) executeHook(cmd string) {
+func (e *Engine) ExecutePreSyncHook() error {
+	return e.executeHook(e.preSyncHook)
+}
+
+func (e *Engine) ExecutePostSyncHook() error {
+	return e.executeHook(e.postSyncHook)
+}
+
+func (e *Engine) executeHook(cmd string) error {
 	if cmd == "" {
-		return
+		return nil
 	}
 	c := exec.Command("sh", "-c", cmd)
-	c.Stdout = nil
-	c.Stderr = nil
-	c.Run()
+	out, err := c.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("hook %q failed (%v): %s", cmd, err, strings.TrimSpace(string(out)))
+	}
+	if len(out) > 0 {
+		log.Printf("hook %q: %s", cmd, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (e *Engine) RegisterConnector(name string, c connectors.Connector) {
@@ -126,11 +145,14 @@ func (e *Engine) PushNote(noteID string) error {
 		return fmt.Errorf("read note file: %w", err)
 	}
 
-	if _, err := e.store.SaveVersion(noteID, content, "pre_sync"); err != nil {
-		return fmt.Errorf("save version: %w", err)
-	}
-
 	rawHash := computeHash(content)
+
+	// Only save version if content actually changed
+	if rawHash != note.ContentHash {
+		if _, err := e.store.SaveVersion(noteID, content, "pre_sync"); err != nil {
+			return fmt.Errorf("save version: %w", err)
+		}
+	}
 
 	// Parse frontmatter
 	fm, body, fmErr := core.ParseFrontmatter(content)
@@ -140,13 +162,15 @@ func (e *Engine) PushNote(noteID string) error {
 		body = content
 	}
 
-	// Update note metadata from frontmatter
-	if fmErr == nil && fm.Title != "" && fm.Title != note.Title {
-		note.Title = fm.Title
-		note.Tags = fm.Tags
+	// Update note metadata if content changed
+	if rawHash != note.ContentHash {
 		note.Content = content
 		note.ContentHash = rawHash
 		note.WordCount = core.WordCount(body)
+		if fmErr == nil && fm.Title != "" {
+			note.Title = fm.Title
+			note.Tags = fm.Tags
+		}
 		if err := e.store.UpdateNote(note); err != nil {
 			return fmt.Errorf("update note metadata: %w", err)
 		}
@@ -159,20 +183,9 @@ func (e *Engine) PushNote(noteID string) error {
 
 		state, stateErr := e.store.GetSyncState(noteID, name)
 
+		// If synced and hash matches, skip
 		if stateErr == nil && state.LastHash == canonicalHash && state.Status == "synced" {
 			continue
-		}
-
-		if stateErr == nil && state.Status == "conflict" {
-			conflict, checkErr := e.detectConflict(conn, state)
-			if checkErr != nil {
-				e.recordFailure(noteID, name, fmt.Errorf("conflict check: %w", checkErr))
-				backendErrs = append(backendErrs, fmt.Sprintf("[%s] conflict check: %v", name, checkErr))
-				continue
-			}
-			if conflict {
-				continue
-			}
 		}
 
 		if err := conn.Connect(); err != nil {
@@ -181,14 +194,16 @@ func (e *Engine) PushNote(noteID string) error {
 			continue
 		}
 
-		if stateErr == nil && state.Status == "synced" {
-			conflict, checkErr := e.detectConflict(conn, state)
+		// Check for remote changes (conflict detection)
+		if stateErr == nil && state.RemoteID != "" {
+			remoteChanged, checkErr := e.detectConflict(conn, state)
 			if checkErr != nil {
 				e.recordFailure(noteID, name, fmt.Errorf("conflict check: %w", checkErr))
 				backendErrs = append(backendErrs, fmt.Sprintf("[%s] conflict check: %v", name, checkErr))
 				continue
 			}
-			if conflict {
+			if remoteChanged {
+				// Conflict detected
 				e.store.UpsertSyncState(&storage.SyncState{
 					NoteID:   noteID,
 					Backend:  name,
@@ -197,7 +212,14 @@ func (e *Engine) PushNote(noteID string) error {
 					Status:   "conflict",
 					ErrorMsg: "remote file modified externally",
 				})
-				e.executeHook(e.onConflictHook)
+				if err := e.executeHook(e.onConflictHook); err != nil {
+					log.Printf("onConflict hook: %v", err)
+				}
+
+				// Apply conflict strategy
+				if err := e.applyConflictStrategy(note, conn, name, content, canonicalHash, state.RemoteID, state.LastSyncAt); err != nil {
+					backendErrs = append(backendErrs, fmt.Sprintf("[%s] conflict strategy: %v", name, err))
+				}
 				continue
 			}
 		}
@@ -242,6 +264,135 @@ func (e *Engine) PushNote(noteID string) error {
 	}
 
 	return nil
+}
+
+func (e *Engine) applyConflictStrategy(note *storage.Note, conn connectors.Connector, backend, content, canonicalHash, remoteID string, lastSyncAt time.Time) error {
+	switch e.conflictStrategy {
+	case "local_wins":
+		_, pushErr := conn.Push(note, content, remoteID)
+		if pushErr != nil {
+			return fmt.Errorf("local_wins push: %w", pushErr)
+		}
+		e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+			NoteID:    note.ID,
+			Backend:   backend,
+			Direction: "push",
+			Status:    "resolved_local",
+			SyncedAt:  time.Now().UTC(),
+		})
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:     note.ID,
+			Backend:    backend,
+			RemoteID:   remoteID,
+			LastSyncAt: time.Now().UTC(),
+			LastHash:   canonicalHash,
+			Status:     "synced",
+		})
+		return nil
+
+	case "remote_wins":
+		remoteContent, pullErr := conn.Pull(remoteID)
+		if pullErr != nil {
+			return fmt.Errorf("remote_wins pull: %w", pullErr)
+		}
+		localPath := filepath.Join(e.notesDir, note.Filename)
+		if err := atomicWriteLocal(localPath, remoteContent); err != nil {
+			return fmt.Errorf("remote_wins write: %w", err)
+		}
+		remoteFm, remoteBody, _ := core.ParseFrontmatter(remoteContent)
+		remoteHash := computeHash(remoteContent)
+		note.Title = remoteFm.Title
+		note.Tags = remoteFm.Tags
+		note.Content = remoteContent
+		note.ContentHash = remoteHash
+		note.WordCount = core.WordCount(remoteBody)
+		note.ModifiedAt = time.Now().UTC()
+		if err := e.store.UpdateNote(note); err != nil {
+			return fmt.Errorf("remote_wins update store: %w", err)
+		}
+		e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+			NoteID:    note.ID,
+			Backend:   backend,
+			Direction: "pull",
+			Status:    "resolved_remote",
+			SyncedAt:  time.Now().UTC(),
+		})
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:     note.ID,
+			Backend:    backend,
+			RemoteID:   remoteID,
+			LastSyncAt: time.Now().UTC(),
+			LastHash:   remoteHash,
+			Status:     "synced",
+		})
+		return nil
+
+	case "last_write_wins":
+		localPath := filepath.Join(e.notesDir, note.Filename)
+		localInfo, statErr := os.Stat(localPath)
+		if statErr == nil && !lastSyncAt.IsZero() && localInfo.ModTime().Before(lastSyncAt) {
+			// Remote was modified more recently — pull remote
+			remoteContent, pullErr := conn.Pull(remoteID)
+			if pullErr != nil {
+				return fmt.Errorf("last_write_wins pull: %w", pullErr)
+			}
+			if err := atomicWriteLocal(localPath, remoteContent); err != nil {
+				return fmt.Errorf("last_write_wins write: %w", err)
+			}
+			remoteFm, remoteBody, _ := core.ParseFrontmatter(remoteContent)
+			remoteHash := computeHash(remoteContent)
+			note.Title = remoteFm.Title
+			note.Tags = remoteFm.Tags
+			note.Content = remoteContent
+			note.ContentHash = remoteHash
+			note.WordCount = core.WordCount(remoteBody)
+			note.ModifiedAt = time.Now().UTC()
+			if err := e.store.UpdateNote(note); err != nil {
+				return fmt.Errorf("last_write_wins update store: %w", err)
+			}
+			e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+				NoteID:    note.ID,
+				Backend:   backend,
+				Direction: "pull",
+				Status:    "resolved_remote",
+				SyncedAt:  time.Now().UTC(),
+			})
+			e.store.UpsertSyncState(&storage.SyncState{
+				NoteID:     note.ID,
+				Backend:    backend,
+				RemoteID:   remoteID,
+				LastSyncAt: time.Now().UTC(),
+				LastHash:   remoteHash,
+				Status:     "synced",
+			})
+			return nil
+		}
+		// Local was modified more recently — push local
+		_, pushErr := conn.Push(note, content, remoteID)
+		if pushErr != nil {
+			return fmt.Errorf("last_write_wins push: %w", pushErr)
+		}
+		e.store.AddSyncHistory(&storage.SyncHistoryEntry{
+			NoteID:    note.ID,
+			Backend:   backend,
+			Direction: "push",
+			Status:    "resolved_local",
+			SyncedAt:  time.Now().UTC(),
+		})
+		e.store.UpsertSyncState(&storage.SyncState{
+			NoteID:     note.ID,
+			Backend:    backend,
+			RemoteID:   remoteID,
+			LastSyncAt: time.Now().UTC(),
+			LastHash:   canonicalHash,
+			Status:     "synced",
+		})
+		return nil
+
+	default:
+		// "ask" — leave as conflict for user to resolve
+		return nil
+	}
 }
 
 func (e *Engine) canonicalHash(backend string, fm core.Frontmatter, body string, rawHash string) string {
@@ -351,14 +502,18 @@ func (e *Engine) PullNote(noteID string) error {
 					Status:   "conflict",
 					ErrorMsg: "local changes conflict with remote changes",
 				})
-				e.executeHook(e.onConflictHook)
+				if err := e.executeHook(e.onConflictHook); err != nil {
+					log.Printf("onConflict hook: %v", err)
+				}
 				continue
 			}
 		}
 
-		if _, err := e.store.SaveVersion(noteID, localContent, "pre_pull"); err != nil {
-			e.recordPullFailure(noteID, name, fmt.Errorf("save pre-pull version: %w", err))
-			continue
+		if localContent != "" {
+			if _, err := e.store.SaveVersion(noteID, localContent, "pre_pull"); err != nil {
+				e.recordPullFailure(noteID, name, fmt.Errorf("save pre-pull version: %w", err))
+				continue
+			}
 		}
 
 		localPath := filepath.Join(e.notesDir, note.Filename)
@@ -371,6 +526,9 @@ func (e *Engine) PullNote(noteID string) error {
 		if fmErr != nil {
 			e.recordPullFailure(noteID, name, fmt.Errorf("parse frontmatter: %w", fmErr))
 			continue
+		}
+		if body == "" {
+			body = remoteContent
 		}
 		note.Title = fm.Title
 		note.Tags = fm.Tags
@@ -425,8 +583,14 @@ func (e *Engine) PullAll() error {
 }
 
 func (e *Engine) SyncAll() error {
-	e.executeHook(e.preSyncHook)
-	defer e.executeHook(e.postSyncHook)
+	if err := e.executeHook(e.preSyncHook); err != nil {
+		log.Printf("preSync hook: %v", err)
+	}
+	defer func() {
+		if err := e.executeHook(e.postSyncHook); err != nil {
+			log.Printf("postSync hook: %v", err)
+		}
+	}()
 
 	notes, err := e.store.ListNotes()
 	if err != nil {
@@ -533,6 +697,9 @@ func (e *Engine) ResolveConflict(noteID, backend, strategy string) error {
 		fm, body, fmErr := core.ParseFrontmatter(remoteContent)
 		if fmErr != nil {
 			return fmt.Errorf("parse frontmatter: %w", fmErr)
+		}
+		if body == "" {
+			body = remoteContent
 		}
 		note.Title = fm.Title
 		note.Tags = fm.Tags
