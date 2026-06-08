@@ -201,7 +201,7 @@ func (m model) buildDashRecentStr() string {
 	return b.String()
 }
 
-func (m model) buildDashConnStr() string {
+func (m *model) buildDashConnStr() string {
 	var b strings.Builder
 	b.WriteString(TitleStyle.Render("Connections"))
 	b.WriteString("\n")
@@ -222,7 +222,7 @@ func (m model) buildDashConnStr() string {
 			continue
 		}
 		if conn, ok := conns[name]; ok {
-			healthy, err := conn.Status()
+			healthy, err := m.cachedConnHealth(name, conn)
 			if healthy {
 				b.WriteString(InfoStyle.Render(fmt.Sprintf("  ● %s - healthy", titleCase(name))))
 			} else if err != nil {
@@ -236,6 +236,15 @@ func (m model) buildDashConnStr() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+func (m *model) cachedConnHealth(name string, conn interface{ Status() (bool, error) }) (bool, error) {
+	if cached, ok := m.connHealthCache[name]; ok && time.Since(cached.checked) < 10*time.Second {
+		return cached.healthy, cached.err
+	}
+	healthy, err := conn.Status()
+	m.connHealthCache[name] = connHealthResult{healthy: healthy, err: err, checked: time.Now()}
+	return healthy, err
 }
 
 func formatBytes(b int64) string {

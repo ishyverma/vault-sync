@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -41,7 +42,14 @@ func (m model) syncView() string {
 		b.WriteString(InfoStyle.Render("  Run: vault connect obsidian <path>"))
 	} else {
 		for name, conn := range conns {
-			healthy, err := conn.Status()
+			var healthy bool
+			var connErr error
+			if cached, ok := m.connHealthCache[name]; ok && time.Since(cached.checked) < 10*time.Second {
+				healthy = cached.healthy
+				connErr = cached.err
+			} else {
+				healthy, connErr = conn.Status()
+			}
 			statusIcon := "○"
 			statusColor := SubtleStyle
 			statusText := "disconnected"
@@ -49,10 +57,10 @@ func (m model) syncView() string {
 				statusIcon = "✓"
 				statusColor = InfoStyle
 				statusText = "healthy"
-			} else if err != nil {
+			} else if connErr != nil {
 				statusIcon = "✗"
 				statusColor = ErrorStyle
-				statusText = fmt.Sprintf("error: %v", err)
+				statusText = fmt.Sprintf("error: %v", connErr)
 			}
 			b.WriteString(statusColor.Render(fmt.Sprintf("  %s %s", statusIcon, titleCase(name))))
 			b.WriteString("\n")

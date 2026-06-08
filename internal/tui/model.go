@@ -94,15 +94,21 @@ type model struct {
 
 	conflictNoteMap map[string]string // noteID -> filename
 	searchSnippets  map[string]string // noteID -> snippet
+	connHealthCache map[string]connHealthResult
 
 	dashStorage   string // cached "12.3 KB" etc
 	dashStreak    int
 	dashWords     int
-	dashStatsStr  string // "12 notes | 34 words today | 12.3 KB | 5 day streak"
 	dashSyncStr   string // pre-rendered sync status block
 	dashTagsStr   string // pre-rendered top tags block
 	dashRecentStr string // pre-rendered recent notes block
 	dashConnStr   string // pre-rendered connections block
+}
+
+type connHealthResult struct {
+	healthy  bool
+	err      error
+	checked  time.Time
 }
 
 func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config, mgr *core.Manager) model {
@@ -169,6 +175,7 @@ func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config,
 		syncStateMap:    make(map[string][]*storage.SyncState),
 		conflictNoteMap: make(map[string]string),
 		searchSnippets:  make(map[string]string),
+		connHealthCache: make(map[string]connHealthResult),
 		browserDirty:    true,
 	}
 }

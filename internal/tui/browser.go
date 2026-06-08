@@ -42,7 +42,6 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var filterCmd tea.Cmd
 		m.browserFilter, filterCmd = m.browserFilter.Update(msg)
 		m.browserDirty = true
-		m.buildBrowserCache()
 		return m, filterCmd
 	}
 
@@ -64,7 +63,9 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	m.buildBrowserCache()
+	if m.browserDirty {
+		m.buildBrowserCache()
+	}
 	m.browserTable, cmd = m.browserTable.Update(msg)
 
 	if row := m.browserTable.SelectedRow(); len(row) > 0 {
@@ -72,7 +73,9 @@ func (m model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, n := range m.notes {
 			if n.Filename == filename {
 				m.previewNote = n
-				m.loadNotePreview(n)
+				notePath := filepath.Join(m.manager.NotesDir(), n.Filename)
+				rendered := m.renderNotePreview(notePath)
+				m.notePreview.SetContent(rendered)
 				break
 			}
 		}
@@ -194,12 +197,6 @@ func openEditor(path, editor string) error {
 	return cmd.Run()
 }
 
-func (m model) loadNotePreview(note *storage.Note) {
-	notePath := filepath.Join(m.manager.NotesDir(), note.Filename)
-	rendered := m.renderNotePreview(notePath)
-	m.notePreview.SetContent(rendered)
-}
-
 func (m model) renderNotePreview(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -244,11 +241,6 @@ func (m model) browserView() string {
 		b.WriteString(m.browserFilter.View())
 		b.WriteString("\n")
 	}
-
-	if m.browserDirty {
-		m.buildBrowserCache()
-	}
-	b.WriteString(TableStyle.Render(m.browserTable.View()))
 
 	b.WriteString(TableStyle.Render(m.browserTable.View()))
 	b.WriteString("\n")
