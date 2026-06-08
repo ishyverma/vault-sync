@@ -208,7 +208,7 @@ func (e *Engine) PushNote(noteID string) error {
 
 		// Check for remote changes (conflict detection)
 		if stateErr == nil && state.RemoteID != "" {
-			remoteChanged, checkErr := e.detectConflict(conn, state)
+			remoteChanged, checkErr := e.detectConflict(name, conn, state)
 			if checkErr != nil {
 				e.recordFailure(noteID, name, fmt.Errorf("conflict check: %w", checkErr))
 				backendErrs = append(backendErrs, fmt.Sprintf("[%s] conflict check: %v", name, checkErr))
@@ -809,7 +809,7 @@ func (e *Engine) AllSyncStatuses() ([]*storage.SyncState, error) {
 	return result, nil
 }
 
-func (e *Engine) detectConflict(conn connectors.Connector, state *storage.SyncState) (bool, error) {
+func (e *Engine) detectConflict(backend string, conn connectors.Connector, state *storage.SyncState) (bool, error) {
 	content, err := conn.Pull(state.RemoteID)
 	if err != nil {
 		if errors.Is(err, notion.ErrNotFound) {
@@ -819,7 +819,9 @@ func (e *Engine) detectConflict(conn connectors.Connector, state *storage.SyncSt
 	}
 
 	remoteHash := computeHash(content)
-	return remoteHash != state.LastHash, nil
+	remoteFm, remoteBody, _ := core.ParseFrontmatter(content)
+	remoteCanonical := e.canonicalHash(backend, remoteFm, remoteBody, remoteHash)
+	return remoteCanonical != state.LastHash, nil
 }
 
 func (e *Engine) recordFailure(noteID, backend string, err error) {
