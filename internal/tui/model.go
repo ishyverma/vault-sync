@@ -106,9 +106,10 @@ type model struct {
 }
 
 type connHealthResult struct {
-	healthy  bool
-	err      error
-	checked  time.Time
+	name    string
+	healthy bool
+	err     error
+	checked time.Time
 }
 
 func NewModel(store *storage.NoteStore, engine *sync.Engine, cfg *config.Config, mgr *core.Manager) model {
@@ -184,6 +185,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		m.loadNotes(),
 		m.loadSyncData(),
+		m.checkConnHealth(),
 	)
 }
 
@@ -220,6 +222,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notePreview.Height = msg.Height / 3
 		m.diffView.Width = msg.Width - 10
 		m.diffView.Height = msg.Height - 10
+		return m, nil
+
+	case connHealthMsg:
+		for _, r := range msg.results {
+			m.connHealthCache[r.name] = r
+		}
+		m.buildDashboardCache()
 		return m, nil
 
 	case notesLoadedMsg:
@@ -522,6 +531,27 @@ func (m *model) loadSyncData() tea.Cmd {
 		history, _ := m.store.ListRecentSyncHistory(10)
 		return syncDataMsg{states: states, queueLen: ql, history: history}
 	}
+}
+
+func (m *model) checkConnHealth() tea.Cmd {
+	return func() tea.Msg {
+		conns := m.engine.Connectors()
+		results := make([]connHealthResult, 0, len(conns))
+		for name, conn := range conns {
+			healthy, err := conn.Status()
+			results = append(results, connHealthResult{
+				healthy:  healthy,
+				err:      err,
+				checked:  time.Now(),
+				name:     name,
+			})
+		}
+		return connHealthMsg{results: results}
+	}
+}
+
+type connHealthMsg struct {
+	results []connHealthResult
 }
 
 func (m *model) loadConflicts() tea.Cmd {

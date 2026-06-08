@@ -201,7 +201,7 @@ func (m model) buildDashRecentStr() string {
 	return b.String()
 }
 
-func (m *model) buildDashConnStr() string {
+func (m model) buildDashConnStr() string {
 	var b strings.Builder
 	b.WriteString(TitleStyle.Render("Connections"))
 	b.WriteString("\n")
@@ -216,35 +216,32 @@ func (m *model) buildDashConnStr() string {
 		"obsidian": m.config.Backends.Obsidian.Enabled,
 		"git":      m.config.Backends.Git.Enabled,
 	}
+	now := time.Now()
 	for name, enabled := range backends {
 		if !enabled {
 			b.WriteString(fmt.Sprintf("  ○ %s - not configured\n", titleCase(name)))
 			continue
 		}
-		if conn, ok := conns[name]; ok {
-			healthy, err := m.cachedConnHealth(name, conn)
-			if healthy {
-				b.WriteString(InfoStyle.Render(fmt.Sprintf("  ● %s - healthy", titleCase(name))))
-			} else if err != nil {
-				b.WriteString(ErrorStyle.Render(fmt.Sprintf("  ● %s - error: %v", titleCase(name), err)))
-			} else {
-				b.WriteString(ErrorStyle.Render(fmt.Sprintf("  ● %s - unhealthy", titleCase(name))))
-			}
-		} else {
+		if _, ok := conns[name]; !ok {
 			b.WriteString(SubtleStyle.Render(fmt.Sprintf("  ○ %s - disconnected", titleCase(name))))
+			b.WriteString("\n")
+			continue
+		}
+		cached, ok := m.connHealthCache[name]
+		if !ok || now.Sub(cached.checked) > 10*time.Second {
+			b.WriteString(fmt.Sprintf("  ○ %s - checking...\n", titleCase(name)))
+			continue
+		}
+		if cached.healthy {
+			b.WriteString(InfoStyle.Render(fmt.Sprintf("  ● %s - healthy", titleCase(name))))
+		} else if cached.err != nil {
+			b.WriteString(ErrorStyle.Render(fmt.Sprintf("  ● %s - error: %v", titleCase(name), cached.err)))
+		} else {
+			b.WriteString(ErrorStyle.Render(fmt.Sprintf("  ● %s - unhealthy", titleCase(name))))
 		}
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-func (m *model) cachedConnHealth(name string, conn interface{ Status() (bool, error) }) (bool, error) {
-	if cached, ok := m.connHealthCache[name]; ok && time.Since(cached.checked) < 10*time.Second {
-		return cached.healthy, cached.err
-	}
-	healthy, err := conn.Status()
-	m.connHealthCache[name] = connHealthResult{healthy: healthy, err: err, checked: time.Now()}
-	return healthy, err
 }
 
 func formatBytes(b int64) string {

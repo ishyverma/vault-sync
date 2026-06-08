@@ -30,7 +30,7 @@ func (m model) syncView() string {
 		b.WriteString("\n")
 	}
 
-	// Backend Status
+	// Backend Status — uses cached health only
 	b.WriteString(TitleStyle.Render("Backend Status"))
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("─", 40))
@@ -41,26 +41,26 @@ func (m model) syncView() string {
 		b.WriteString("\n")
 		b.WriteString(InfoStyle.Render("  Run: vault connect obsidian <path>"))
 	} else {
-		for name, conn := range conns {
-			var healthy bool
-			var connErr error
-			if cached, ok := m.connHealthCache[name]; ok && time.Since(cached.checked) < 10*time.Second {
-				healthy = cached.healthy
-				connErr = cached.err
-			} else {
-				healthy, connErr = conn.Status()
-			}
+		now := time.Now()
+		for name := range conns {
+			cached, ok := m.connHealthCache[name]
 			statusIcon := "○"
 			statusColor := SubtleStyle
-			statusText := "disconnected"
-			if healthy {
-				statusIcon = "✓"
-				statusColor = InfoStyle
-				statusText = "healthy"
-			} else if connErr != nil {
-				statusIcon = "✗"
-				statusColor = ErrorStyle
-				statusText = fmt.Sprintf("error: %v", connErr)
+			statusText := "checking..."
+			if ok && now.Sub(cached.checked) <= 10*time.Second {
+				if cached.healthy {
+					statusIcon = "✓"
+					statusColor = InfoStyle
+					statusText = "healthy"
+				} else if cached.err != nil {
+					statusIcon = "✗"
+					statusColor = ErrorStyle
+					statusText = fmt.Sprintf("error: %v", cached.err)
+				} else {
+					statusIcon = "✗"
+					statusColor = ErrorStyle
+					statusText = "unhealthy"
+				}
 			}
 			b.WriteString(statusColor.Render(fmt.Sprintf("  %s %s", statusIcon, titleCase(name))))
 			b.WriteString("\n")
@@ -69,14 +69,18 @@ func (m model) syncView() string {
 		}
 	}
 
-	// Connector Sync States
-	if len(m.syncStates) > 0 {
+	// Connector Sync States (limited to 20)
+	states := m.syncStates
+	if len(states) > 20 {
+		states = states[:20]
+	}
+	if len(states) > 0 {
 		b.WriteString(TitleStyle.Render("Per-Connector Sync State"))
 		b.WriteString("\n")
 		b.WriteString(strings.Repeat("─", 40))
 		b.WriteString("\n")
 
-		for _, s := range m.syncStates {
+		for _, s := range states {
 			statusColor := SubtleStyle
 			icon := "○"
 			switch s.Status {
@@ -91,15 +95,14 @@ func (m model) syncView() string {
 				icon = "⚠"
 			}
 
-			lastSync := "never"
-			if !s.LastSyncAt.IsZero() {
-				lastSync = s.LastSyncAt.Format("2006-01-02 15:04")
-			}
-
 			b.WriteString(statusColor.Render(fmt.Sprintf("  %s %s", icon, s.Backend)))
 			b.WriteString("\n")
 			b.WriteString(SubtleStyle.Render(fmt.Sprintf("    Status:   %s", s.Status)))
 			b.WriteString("\n")
+			lastSync := "never"
+			if !s.LastSyncAt.IsZero() {
+				lastSync = s.LastSyncAt.Format("2006-01-02 15:04")
+			}
 			b.WriteString(SubtleStyle.Render(fmt.Sprintf("    Last sync: %s", lastSync)))
 			b.WriteString("\n")
 			if s.ErrorMsg != "" {
@@ -107,6 +110,10 @@ func (m model) syncView() string {
 				b.WriteString("\n")
 			}
 			b.WriteString("\n")
+		}
+		if len(m.syncStates) > 20 {
+			b.WriteString(SubtleStyle.Render(fmt.Sprintf("  … and %d more states (showing 20)", len(m.syncStates)-20)))
+			b.WriteString("\n\n")
 		}
 	}
 
