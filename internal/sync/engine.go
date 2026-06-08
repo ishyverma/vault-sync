@@ -54,6 +54,8 @@ type Engine struct {
 	notesDir         string
 	retryLimit       int
 	conflictStrategy string
+	pushStrategy     string
+	pullStrategy     string
 	preSyncHook      string
 	postSyncHook     string
 	onConflictHook   string
@@ -61,10 +63,12 @@ type Engine struct {
 
 func NewEngine(store *storage.NoteStore, notesDir string) *Engine {
 	return &Engine{
-		store:      store,
-		connectors: make(map[string]connectors.Connector),
-		notesDir:   notesDir,
-		retryLimit: 5,
+		store:        store,
+		connectors:   make(map[string]connectors.Connector),
+		notesDir:     notesDir,
+		retryLimit:   5,
+		pushStrategy: "local_wins",
+		pullStrategy: "remote_wins",
 	}
 }
 
@@ -74,6 +78,14 @@ func (e *Engine) SetRetryLimit(limit int) {
 
 func (e *Engine) SetConflictStrategy(strategy string) {
 	e.conflictStrategy = strategy
+}
+
+func (e *Engine) SetPushStrategy(strategy string) {
+	e.pushStrategy = strategy
+}
+
+func (e *Engine) SetPullStrategy(strategy string) {
+	e.pullStrategy = strategy
 }
 
 func (e *Engine) SetHooks(preSync, postSync, onConflict string) {
@@ -216,8 +228,8 @@ func (e *Engine) PushNote(noteID string) error {
 					log.Printf("onConflict hook: %v", err)
 				}
 
-				// Apply conflict strategy
-				if err := e.applyConflictStrategy(note, conn, name, content, canonicalHash, state.RemoteID, state.LastSyncAt); err != nil {
+				// Apply push conflict strategy (default: local_wins)
+				if err := e.applyConflictStrategy(note, conn, name, content, canonicalHash, state.RemoteID, state.LastSyncAt, e.pushStrategy); err != nil {
 					backendErrs = append(backendErrs, fmt.Sprintf("[%s] conflict strategy: %v", name, err))
 				}
 				continue
@@ -266,8 +278,11 @@ func (e *Engine) PushNote(noteID string) error {
 	return nil
 }
 
-func (e *Engine) applyConflictStrategy(note *storage.Note, conn connectors.Connector, backend, content, canonicalHash, remoteID string, lastSyncAt time.Time) error {
-	switch e.conflictStrategy {
+func (e *Engine) applyConflictStrategy(note *storage.Note, conn connectors.Connector, backend, content, canonicalHash, remoteID string, lastSyncAt time.Time, strategy string) error {
+	if strategy == "" {
+		strategy = e.conflictStrategy
+	}
+	switch strategy {
 	case "local_wins":
 		_, pushErr := conn.Push(note, content, remoteID)
 		if pushErr != nil {
@@ -504,6 +519,15 @@ func (e *Engine) PullNote(noteID string) error {
 				})
 				if err := e.executeHook(e.onConflictHook); err != nil {
 					log.Printf("onConflict hook: %v", err)
+				}
+
+				// Save local version then auto-resolve with pull strategy (default: remote_wins)
+				if localContent != "" {
+					e.store.SaveVersion(noteID, localContent, "pre_pull")
+				}
+				localHash := computeHash(localContent)
+				if err := e.applyConflictStrategy(note, conn, name, localContent, localHash, state.RemoteID, state.LastSyncAt, e.pullStrategy); err != nil {
+					log.Printf("pull conflict auto-resolve: %v", err)
 				}
 				continue
 			}
